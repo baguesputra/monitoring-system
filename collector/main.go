@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"os"
 	"time"
+
+	"github.com/joho/godotenv"
 )
 
-// MetricsPayload merepresentasikan data yang dikirim oleh agent
 type MetricsPayload struct {
 	ServerID  string    `json:"server_id"`
 	CPU       float64   `json:"cpu_percent"`
@@ -17,36 +19,48 @@ type MetricsPayload struct {
 }
 
 func main() {
+	// Load .env dari root project (2 folder di atas collector/)
+	if err := godotenv.Load("../.env"); err != nil {
+		log.Println("Warning: .env file tidak ditemukan, menggunakan environment variable sistem")
+	}
+
+	initDB()
+
 	http.HandleFunc("/api/metrics", handleMetrics)
 
-	log.Println("Collector API starting on :8081...")
-	if err := http.ListenAndServe(":8081", nil); err != nil {
+	port := os.Getenv("COLLECTOR_PORT")
+	if port == "" {
+		port = "8081"
+	}
+
+	log.Printf("Collector API starting on :%s...", port)
+	if err := http.ListenAndServe(":"+port, nil); err != nil {
 		log.Fatalf("Server gagal jalan: %v", err)
 	}
 }
 
-// handleMetrics menerima data metrics dari agent via POST request
 func handleMetrics(w http.ResponseWriter, r *http.Request) {
-	// Cuma terima method POST
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	var payload MetricsPayload
-
-	// Decode JSON dari body request ke struct MetricsPayload
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
 		log.Printf("Gagal parse payload: %v", err)
 		return
 	}
 
-	// Untuk sekarang, cukup log ke console dulu
-	log.Printf("Received metrics from [%s] - CPU: %.2f%%, RAM: %.2f%%, Disk: %.2f%%",
+	if err := saveMetrics(payload); err != nil {
+		http.Error(w, "Gagal menyimpan data", http.StatusInternalServerError)
+		log.Printf("Gagal simpan metrics ke database: %v", err)
+		return
+	}
+
+	log.Printf("Metrics tersimpan - [%s] CPU: %.2f%%, RAM: %.2f%%, Disk: %.2f%%",
 		payload.ServerID, payload.CPU, payload.RAM, payload.Disk)
 
-	// Kirim response sukses ke agent
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"status":"received"}`))
 }
