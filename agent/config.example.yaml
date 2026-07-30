@@ -1,0 +1,3 @@
+server_id: "CHANGE_ME"
+collector_url: "http://collector.internal:8081/api/metrics"
+interval_seconds: 5
