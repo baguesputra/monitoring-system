@@ -30,3 +30,6 @@ Thumbs.db
 
 # Logs
 *.log
+
+#Agent
+agent/config.yaml
