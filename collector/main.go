@@ -15,6 +15,9 @@ type MetricsPayload struct {
 	CPU       float64   `json:"cpu_percent"`
 	RAM       float64   `json:"ram_percent"`
 	Disk      float64   `json:"disk_percent"`
+	NetworkSentBps  float64         `json:"network_sent_bps"`
+	NetworkRecvBps  float64         `json:"network_recv_bps"`
+	ServiceStatus   map[string]bool `json:"service_status"`
 	Timestamp time.Time `json:"timestamp"`
 }
 
@@ -58,8 +61,14 @@ func handleMetrics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("Metrics tersimpan - [%s] CPU: %.2f%%, RAM: %.2f%%, Disk: %.2f%%",
-		payload.ServerID, payload.CPU, payload.RAM, payload.Disk)
+	if err := saveServiceStatus(payload.ServerID, payload.ServiceStatus, payload.Timestamp); err != nil {
+		log.Printf("Gagal simpan service status: %v", err)
+		// tidak return error ke agent, karena metrics utama sudah berhasil tersimpan
+	}
+
+	log.Printf("Metrics tersimpan - [%s] CPU: %.2f%%, RAM: %.2f%%, Disk: %.2f%%, Net: %.0f/%.0f Bps, Services: %v",
+		payload.ServerID, payload.CPU, payload.RAM, payload.Disk,
+		payload.NetworkSentBps, payload.NetworkRecvBps, payload.ServiceStatus)
 
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"status":"received"}`))

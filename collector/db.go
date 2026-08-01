@@ -11,7 +11,6 @@ import (
 
 var dbPool *pgxpool.Pool
 
-// initDB membuka connection pool ke PostgreSQL
 func initDB() {
 	dbHost := os.Getenv("DB_HOST")
 	dbPort := os.Getenv("DB_PORT")
@@ -29,7 +28,6 @@ func initDB() {
 		log.Fatalf("Gagal membuat connection pool ke database: %v", err)
 	}
 
-	// Test koneksi beneran nyambung, bukan cuma bikin objek pool-nya doang
 	if err := pool.Ping(context.Background()); err != nil {
 		log.Fatalf("Gagal ping database: %v", err)
 	}
@@ -38,16 +36,36 @@ func initDB() {
 	log.Println("Berhasil terkoneksi ke database")
 }
 
-// saveMetrics menyimpan 1 payload metrics ke tabel metrics
+// saveMetrics menyimpan data CPU/RAM/Disk/Network ke tabel metrics
 func saveMetrics(payload MetricsPayload) error {
 	query := `
-		INSERT INTO metrics (server_id, cpu_percent, ram_percent, disk_percent, recorded_at)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO metrics (server_id, cpu_percent, ram_percent, disk_percent, network_sent_bps, network_recv_bps, recorded_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 	`
 
 	_, err := dbPool.Exec(context.Background(), query,
-		payload.ServerID, payload.CPU, payload.RAM, payload.Disk, payload.Timestamp,
+		payload.ServerID, payload.CPU, payload.RAM, payload.Disk,
+		payload.NetworkSentBps, payload.NetworkRecvBps, payload.Timestamp,
 	)
 
 	return err
+}
+
+// saveServiceStatus menyimpan status tiap service yang dicek ke tabel service_status
+func saveServiceStatus(serverID string, statuses map[string]bool, checkedAt interface{}) error {
+	query := `
+		INSERT INTO service_status (server_id, service_name, is_running, checked_at)
+		VALUES ($1, $2, $3, $4)
+	`
+
+	for serviceName, isRunning := range statuses {
+		_, err := dbPool.Exec(context.Background(), query,
+			serverID, serviceName, isRunning, checkedAt,
+		)
+		if err != nil {
+			return fmt.Errorf("gagal simpan status service '%s': %w", serviceName, err)
+		}
+	}
+
+	return nil
 }

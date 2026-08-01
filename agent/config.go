@@ -12,6 +12,7 @@ type Config struct {
 	ServerID         string `yaml:"server_id"`
 	CollectorURL     string `yaml:"collector_url"`
 	IntervalSeconds  int    `yaml:"interval_seconds"`
+	ServicesToCheck  []string `yaml:"services_to_check"`
 }
 
 // loadConfig membaca dan parse file config.yaml
