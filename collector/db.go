@@ -20,6 +20,17 @@ type Server struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// MetricRecord merepresentasikan 1 baris data historis dari tabel metrics
+type MetricRecord struct {
+	ServerID       string    `json:"server_id"`
+	CPU            float64   `json:"cpu_percent"`
+	RAM            float64   `json:"ram_percent"`
+	Disk           float64   `json:"disk_percent"`
+	NetworkSentBps float64   `json:"network_sent_bps"`
+	NetworkRecvBps float64   `json:"network_recv_bps"`
+	RecordedAt     time.Time `json:"recorded_at"`
+}
+
 var dbPool *pgxpool.Pool
 
 func initDB() {
@@ -105,4 +116,33 @@ func getAllServers() ([]Server, error) {
 	}
 
 	return servers, nil
+}
+
+// getMetricsHistory mengambil data metrics 1 server dalam rentang waktu tertentu
+func getMetricsHistory(serverID string, since time.Time) ([]MetricRecord, error) {
+	query := `
+		SELECT server_id, cpu_percent, ram_percent, disk_percent,
+		       network_sent_bps, network_recv_bps, recorded_at
+		FROM metrics
+		WHERE server_id = $1 AND recorded_at >= $2
+		ORDER BY recorded_at ASC
+	`
+
+	rows, err := dbPool.Query(context.Background(), query, serverID, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var records []MetricRecord
+	for rows.Next() {
+		var m MetricRecord
+		if err := rows.Scan(&m.ServerID, &m.CPU, &m.RAM, &m.Disk,
+			&m.NetworkSentBps, &m.NetworkRecvBps, &m.RecordedAt); err != nil {
+			return nil, err
+		}
+		records = append(records, m)
+	}
+
+	return records, nil
 }
