@@ -5,9 +5,20 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+type Server struct {
+	ID        int       `json:"id"`
+	ServerID  string    `json:"server_id"`
+	Hostname  string    `json:"hostname"`
+	IPAddress string    `json:"ip_address"`
+	Location  string    `json:"location"`
+	IsActive  bool      `json:"is_active"`
+	CreatedAt time.Time `json:"created_at"`
+}
 
 var dbPool *pgxpool.Pool
 
@@ -68,4 +79,30 @@ func saveServiceStatus(serverID string, statuses map[string]bool, checkedAt inte
 	}
 
 	return nil
+}
+
+// getAllServers mengambil semua server yang terdaftar
+func getAllServers() ([]Server, error) {
+	query := `
+		SELECT id, server_id, hostname, COALESCE(ip_address, ''), COALESCE(location, ''), is_active, created_at
+		FROM servers
+		ORDER BY hostname ASC
+	`
+
+	rows, err := dbPool.Query(context.Background(), query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var servers []Server
+	for rows.Next() {
+		var s Server
+		if err := rows.Scan(&s.ID, &s.ServerID, &s.Hostname, &s.IPAddress, &s.Location, &s.IsActive, &s.CreatedAt); err != nil {
+			return nil, err
+		}
+		servers = append(servers, s)
+	}
+
+	return servers, nil
 }
