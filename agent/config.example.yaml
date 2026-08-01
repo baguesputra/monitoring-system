@@ -1,3 +1,10 @@
 server_id: "CHANGE_ME"
 collector_url: "http://collector.internal:8081/api/metrics"
 interval_seconds: 5
+
+server_id: "test-01"
+collector_url: "http://localhost:8081/api/metrics"
+interval_seconds: 5
+services_to_check:
+  - "nginx"
+  - "postgres"
