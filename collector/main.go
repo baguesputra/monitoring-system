@@ -22,14 +22,17 @@ type MetricsPayload struct {
 }
 
 func main() {
-	// Load .env dari root project (2 folder di atas collector/)
 	if err := godotenv.Load("../.env"); err != nil {
 		log.Println("Warning: .env file tidak ditemukan, menggunakan environment variable sistem")
 	}
 
 	initDB()
 
-	http.HandleFunc("/api/metrics", handleMetrics)
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/metrics", handleMetrics)
+	mux.HandleFunc("GET /api/servers", handleGetServers)
+	mux.HandleFunc("GET /api/servers/{id}/metrics", handleGetServerMetrics)
+	mux.HandleFunc("GET /api/servers/{id}/status", handleGetServerStatus)
 
 	port := os.Getenv("COLLECTOR_PORT")
 	if port == "" {
@@ -37,7 +40,7 @@ func main() {
 	}
 
 	log.Printf("Collector API starting on :%s...", port)
-	if err := http.ListenAndServe(":"+port, nil); err != nil {
+	if err := http.ListenAndServe(":"+port, mux); err != nil {
 		log.Fatalf("Server gagal jalan: %v", err)
 	}
 }
