@@ -31,6 +31,18 @@ type MetricRecord struct {
 	RecordedAt     time.Time `json:"recorded_at"`
 }
 
+// ServerStatus merepresentasikan kondisi terkini 1 server:
+// metrics terbaru + status semua service yang dicek
+type ServerStatus struct {
+	ServerID      string          `json:"server_id"`
+	Hostname      string          `json:"hostname"`
+	CPU           float64         `json:"cpu_percent"`
+	RAM           float64         `json:"ram_percent"`
+	Disk          float64         `json:"disk_percent"`
+	LastSeenAt    time.Time       `json:"last_seen_at"`
+	ServiceStatus map[string]bool `json:"service_status"`
+}
+
 var dbPool *pgxpool.Pool
 
 func initDB() {
@@ -145,4 +157,51 @@ func getMetricsHistory(serverID string, since time.Time) ([]MetricRecord, error)
 	}
 
 	return records, nil
+}
+
+// getLatestServerStatus mengambil metrics terbaru + service status terbaru 1 server
+func getLatestServerStatus(serverID string) (*ServerStatus, error) {
+	// Ambil metrics paling baru
+	metricQuery := `
+		SELECT m.server_id, s.hostname, m.cpu_percent, m.ram_percent, m.disk_percent, m.recorded_at
+		FROM metrics m
+		JOIN servers s ON s.server_id = m.server_id
+		WHERE m.server_id = $1
+		ORDER BY m.recorded_at DESC
+		LIMIT 1
+	`
+
+	var status ServerStatus
+	err := dbPool.QueryRow(context.Background(), metricQuery, serverID).Scan(
+		&status.ServerID, &status.Hostname, &status.CPU, &status.RAM, &status.Disk, &status.LastSeenAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// Ambil service status terbaru untuk tiap service (distinct per service_name)
+	serviceQuery := `
+		SELECT DISTINCT ON (service_name) service_name, is_running
+		FROM service_status
+		WHERE server_id = $1
+		ORDER BY service_name, checked_at DESC
+	`
+
+	rows, err := dbPool.Query(context.Background(), serviceQuery, serverID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	status.ServiceStatus = make(map[string]bool)
+	for rows.Next() {
+		var name string
+		var isRunning bool
+		if err := rows.Scan(&name, &isRunning); err != nil {
+			return nil, err
+		}
+		status.ServiceStatus[name] = isRunning
+	}
+
+	return &status, nil
 }

@@ -32,6 +32,7 @@ func main() {
 	mux.HandleFunc("POST /api/metrics", handleMetrics)
 	mux.HandleFunc("GET /api/servers", handleGetServers)
 	mux.HandleFunc("GET /api/servers/{id}/metrics", handleGetServerMetrics)
+	mux.HandleFunc("GET /api/servers/{id}/status", handleGetServerStatus)
 
 	port := os.Getenv("COLLECTOR_PORT")
 	if port == "" {

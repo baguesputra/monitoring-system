@@ -53,3 +53,18 @@ func parseRange(rangeParam string) (time.Duration, error) {
 	}
 	return time.ParseDuration(rangeParam)
 }
+
+// handleGetServerStatus menangani GET /api/servers/{id}/status
+func handleGetServerStatus(w http.ResponseWriter, r *http.Request) {
+	serverID := r.PathValue("id")
+
+	status, err := getLatestServerStatus(serverID)
+	if err != nil {
+		http.Error(w, "Server tidak ditemukan atau belum ada data", http.StatusNotFound)
+		log.Printf("Gagal ambil status server '%s': %v", serverID, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(status)
+}
