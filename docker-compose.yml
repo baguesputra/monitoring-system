@@ -8,10 +8,29 @@ services:
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./collector/migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d monitoring_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  collector:
+    build: ./collector
+    container_name: monitoring-collector
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DB_HOST: postgres
+    ports:
+      - "${COLLECTOR_PORT:-8081}:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
 
 volumes:
   postgres_data:

@@ -15,7 +15,9 @@ func handleGetServers(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Gagal query servers: %v", err)
 		return
 	}
-
+	if servers == nil {
+		servers = []Server{}
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(servers)
 }
@@ -67,4 +69,48 @@ func handleGetServerStatus(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(status)
+}
+
+func handleAssetInfo(w http.ResponseWriter, r *http.Request) {
+	var p AssetInfoPayload
+	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
+		return
+	}
+	if p.ServerID == "" {
+		http.Error(w, "server_id tidak boleh kosong", http.StatusBadRequest)
+		return
+	}
+	if err := upsertAssetInfo(p); err != nil {
+		http.Error(w, "Gagal menyimpan asset info", http.StatusInternalServerError)
+		log.Printf("Gagal upsert asset_info: %v", err)
+		return
+	}
+	if err := replaceInstalledApplications(p.ServerID, p.Applications); err != nil {
+		log.Printf("Gagal simpan applications: %v", err)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"status":"received"}`))
+}
+
+func handleGetAssetInfo(w http.ResponseWriter, r *http.Request) {
+	serverID := r.PathValue("id")
+	asset, err := getAssetInfo(serverID)
+	if err != nil {
+		http.Error(w, "Asset info tidak ditemukan", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(asset)
+}
+
+func handleGetApplications(w http.ResponseWriter, r *http.Request) {
+	serverID := r.PathValue("id")
+	apps, err := getInstalledApplications(serverID)
+	if err != nil {
+		http.Error(w, "Gagal mengambil data aplikasi", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(apps)
 }

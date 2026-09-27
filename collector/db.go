@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -57,13 +58,31 @@ func initDB() {
 		dbUser, dbPassword, dbHost, dbPort, dbName,
 	)
 
-	pool, err := pgxpool.New(context.Background(), connString)
+	cfg, err := pgxpool.ParseConfig(connString)
+	if err != nil {
+		log.Fatalf("Gagal parse connection string: %v", err)
+	}
+	if v := os.Getenv("DB_MAX_CONNS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.MaxConns = int32(n)
+		}
+	} else {
+		cfg.MaxConns = 25
+	}
+
+	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
 	if err != nil {
 		log.Fatalf("Gagal membuat connection pool ke database: %v", err)
 	}
 
-	if err := pool.Ping(context.Background()); err != nil {
-		log.Fatalf("Gagal ping database: %v", err)
+	for i := 0; i < 10; i++ {
+		if err := pool.Ping(context.Background()); err == nil {
+			break
+		} else if i == 9 {
+			log.Fatalf("Gagal ping database setelah retry: %v", err)
+		}
+		log.Printf("Database belum siap, retry %d/10: %v", i+1, err)
+		time.Sleep(2 * time.Second)
 	}
 
 	dbPool = pool
@@ -204,4 +223,144 @@ func getLatestServerStatus(serverID string) (*ServerStatus, error) {
 	}
 
 	return &status, nil
+}
+
+type AssetInfo struct {
+	ServerID             string   `json:"server_id"`
+	ProcessorModel       string   `json:"processor_model"`
+	ProcessorCores       int      `json:"processor_cores"`
+	ProcessorClockGHz    float64  `json:"processor_clock_ghz"`
+	DiskType             string   `json:"disk_type"`
+	DiskSizeGB           float64  `json:"disk_size_gb"`
+	DiskHealthStatus     string   `json:"disk_health_status"`
+	RAMTotalGB           float64  `json:"ram_total_gb"`
+	RAMSlotsUsed         int      `json:"ram_slots_used"`
+	RAMSlotsTotal        int      `json:"ram_slots_total"`
+	RAMDDRType           string   `json:"ram_ddr_type"`
+	BatteryHealthPercent *float64 `json:"battery_health_percent"`
+	SerialNumber         string   `json:"serial_number"`
+	IPAddress            string   `json:"ip_address"`
+	MACAddress           string   `json:"mac_address"`
+	OSVersion            string   `json:"os_version"`
+	UpdatedAt            time.Time `json:"updated_at"`
+}
+
+type AppInfo struct {
+	Name        string `json:"app_name"`
+	Version     string `json:"app_version"`
+	Publisher   string `json:"publisher"`
+	InstallDate string `json:"install_date"`
+}
+
+type AssetInfoPayload struct {
+	ServerID             string    `json:"server_id"`
+	ProcessorModel       string    `json:"processor_model"`
+	ProcessorCores       int       `json:"processor_cores"`
+	ProcessorClockGHz    float64   `json:"processor_clock_ghz"`
+	DiskType             string    `json:"disk_type"`
+	DiskSizeGB           float64   `json:"disk_size_gb"`
+	DiskHealthStatus     string    `json:"disk_health_status"`
+	RAMTotalGB           float64   `json:"ram_total_gb"`
+	RAMSlotsUsed         int       `json:"ram_slots_used"`
+	RAMSlotsTotal        int       `json:"ram_slots_total"`
+	RAMDDRType           string    `json:"ram_ddr_type"`
+	BatteryHealthPercent *float64  `json:"battery_health_percent"`
+	SerialNumber         string    `json:"serial_number"`
+	IPAddress            string    `json:"ip_address"`
+	MACAddress           string    `json:"mac_address"`
+	OSVersion            string    `json:"os_version"`
+	Applications         []AppInfo `json:"applications"`
+}
+
+type InstalledApp struct {
+	AppName     string    `json:"app_name"`
+	AppVersion  string    `json:"app_version"`
+	Publisher   string    `json:"publisher"`
+	InstallDate string    `json:"install_date"`
+	ReportedAt  time.Time `json:"reported_at"`
+}
+
+func upsertAssetInfo(p AssetInfoPayload) error {
+	_, err := dbPool.Exec(context.Background(),
+		`INSERT INTO servers (server_id, hostname) VALUES ($1, $1) ON CONFLICT (server_id) DO NOTHING`, p.ServerID)
+	if err != nil {
+		return err
+	}
+	query := `
+		INSERT INTO asset_info (server_id, processor_model, processor_cores, processor_clock_ghz, disk_type, disk_size_gb, disk_health_status, ram_total_gb, ram_slots_used, ram_slots_total, ram_ddr_type, battery_health_percent, serial_number, ip_address, mac_address, os_version, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,NOW())
+		ON CONFLICT (server_id) DO UPDATE SET
+			processor_model=EXCLUDED.processor_model, processor_cores=EXCLUDED.processor_cores, processor_clock_ghz=EXCLUDED.processor_clock_ghz,
+			disk_type=EXCLUDED.disk_type, disk_size_gb=EXCLUDED.disk_size_gb, disk_health_status=EXCLUDED.disk_health_status,
+			ram_total_gb=EXCLUDED.ram_total_gb, ram_slots_used=EXCLUDED.ram_slots_used, ram_slots_total=EXCLUDED.ram_slots_total, ram_ddr_type=EXCLUDED.ram_ddr_type,
+			battery_health_percent=EXCLUDED.battery_health_percent, serial_number=EXCLUDED.serial_number, ip_address=EXCLUDED.ip_address, mac_address=EXCLUDED.mac_address,
+			os_version=EXCLUDED.os_version, updated_at=NOW()
+	`
+	_, err = dbPool.Exec(context.Background(), query,
+		p.ServerID, p.ProcessorModel, p.ProcessorCores, p.ProcessorClockGHz, p.DiskType, p.DiskSizeGB, p.DiskHealthStatus,
+		p.RAMTotalGB, p.RAMSlotsUsed, p.RAMSlotsTotal, p.RAMDDRType, p.BatteryHealthPercent, p.SerialNumber, p.IPAddress, p.MACAddress, p.OSVersion)
+	if err != nil {
+		return err
+	}
+	if p.IPAddress != "" {
+		_, _ = dbPool.Exec(context.Background(), `UPDATE servers SET ip_address=$1 WHERE server_id=$2`, p.IPAddress, p.ServerID)
+	}
+	return nil
+}
+
+func replaceInstalledApplications(serverID string, apps []AppInfo) error {
+	ctx := context.Background()
+	tx, err := dbPool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `DELETE FROM installed_applications WHERE server_id=$1`, serverID); err != nil {
+		return err
+	}
+	for _, a := range apps {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO installed_applications (server_id, app_name, app_version, publisher, install_date, reported_at) VALUES ($1,$2,$3,$4,$5,NOW())`,
+			serverID, a.Name, a.Version, a.Publisher, a.InstallDate); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+func getAssetInfo(serverID string) (*AssetInfo, error) {
+	var a AssetInfo
+	err := dbPool.QueryRow(context.Background(), `
+		SELECT server_id, COALESCE(processor_model,''), COALESCE(processor_cores,0), COALESCE(processor_clock_ghz,0),
+		       COALESCE(disk_type,''), COALESCE(disk_size_gb,0), COALESCE(disk_health_status,''), COALESCE(ram_total_gb,0),
+		       COALESCE(ram_slots_used,0), COALESCE(ram_slots_total,0), COALESCE(ram_ddr_type,''), battery_health_percent,
+		       COALESCE(serial_number,''), COALESCE(ip_address,''), COALESCE(mac_address,''), COALESCE(os_version,''), updated_at
+		FROM asset_info WHERE server_id=$1`, serverID).Scan(
+		&a.ServerID, &a.ProcessorModel, &a.ProcessorCores, &a.ProcessorClockGHz, &a.DiskType, &a.DiskSizeGB, &a.DiskHealthStatus,
+		&a.RAMTotalGB, &a.RAMSlotsUsed, &a.RAMSlotsTotal, &a.RAMDDRType, &a.BatteryHealthPercent, &a.SerialNumber, &a.IPAddress, &a.MACAddress, &a.OSVersion, &a.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &a, nil
+}
+
+func getInstalledApplications(serverID string) ([]InstalledApp, error) {
+	rows, err := dbPool.Query(context.Background(),
+		`SELECT app_name, COALESCE(app_version,''), COALESCE(publisher,''), COALESCE(install_date,''), reported_at FROM installed_applications WHERE server_id=$1 ORDER BY app_name ASC`, serverID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var apps []InstalledApp
+	for rows.Next() {
+		var a InstalledApp
+		if err := rows.Scan(&a.AppName, &a.AppVersion, &a.Publisher, &a.InstallDate, &a.ReportedAt); err != nil {
+			return nil, err
+		}
+		apps = append(apps, a)
+	}
+	if apps == nil {
+		apps = []InstalledApp{}
+	}
+	return apps, nil
 }
