@@ -22,17 +22,22 @@ type MetricsPayload struct {
 }
 
 func main() {
-	if err := godotenv.Load("../.env"); err != nil {
-		log.Println("Warning: .env file tidak ditemukan, menggunakan environment variable sistem")
+	_ = godotenv.Load("../.env")
+	_ = godotenv.Load()
+	if os.Getenv("DB_HOST") == "" {
+		log.Println("Warning: .env tidak ditemukan, menggunakan environment variable sistem")
 	}
 
 	initDB()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/metrics", handleMetrics)
+	mux.HandleFunc("POST /api/asset-info", handleAssetInfo)
 	mux.HandleFunc("GET /api/servers", handleGetServers)
 	mux.HandleFunc("GET /api/servers/{id}/metrics", handleGetServerMetrics)
 	mux.HandleFunc("GET /api/servers/{id}/status", handleGetServerStatus)
+	mux.HandleFunc("GET /api/servers/{id}/asset-info", handleGetAssetInfo)
+	mux.HandleFunc("GET /api/servers/{id}/applications", handleGetApplications)
 
 	port := os.Getenv("COLLECTOR_PORT")
 	if port == "" {
