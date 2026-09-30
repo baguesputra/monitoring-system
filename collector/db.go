@@ -8,17 +8,22 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Server struct {
-	ID        int       `json:"id"`
-	ServerID  string    `json:"server_id"`
-	Hostname  string    `json:"hostname"`
-	IPAddress string    `json:"ip_address"`
-	Location  string    `json:"location"`
-	IsActive  bool      `json:"is_active"`
-	CreatedAt time.Time `json:"created_at"`
+	ID         int       `json:"id"`
+	ServerID   string    `json:"server_id"`
+	Hostname   string    `json:"hostname"`
+	IPAddress  string    `json:"ip_address"`
+	Location   string    `json:"location"`
+	DeviceType string    `json:"device_type"`
+	OwnerName  string    `json:"owner_name"`
+	Department string    `json:"department"`
+	Notes      string    `json:"notes"`
+	IsActive   bool      `json:"is_active"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 // MetricRecord merepresentasikan 1 baris data historis dari tabel metrics
@@ -126,7 +131,9 @@ func saveServiceStatus(serverID string, statuses map[string]bool, checkedAt inte
 // getAllServers mengambil semua server yang terdaftar
 func getAllServers() ([]Server, error) {
 	query := `
-		SELECT id, server_id, hostname, COALESCE(ip_address, ''), COALESCE(location, ''), is_active, created_at
+		SELECT id, server_id, hostname, COALESCE(ip_address, ''), COALESCE(location, ''),
+		       COALESCE(device_type, 'server'), COALESCE(owner_name, ''), COALESCE(department, ''), COALESCE(notes, ''),
+		       is_active, created_at
 		FROM servers
 		ORDER BY hostname ASC
 	`
@@ -140,13 +147,35 @@ func getAllServers() ([]Server, error) {
 	var servers []Server
 	for rows.Next() {
 		var s Server
-		if err := rows.Scan(&s.ID, &s.ServerID, &s.Hostname, &s.IPAddress, &s.Location, &s.IsActive, &s.CreatedAt); err != nil {
+		if err := rows.Scan(&s.ID, &s.ServerID, &s.Hostname, &s.IPAddress, &s.Location,
+			&s.DeviceType, &s.OwnerName, &s.Department, &s.Notes, &s.IsActive, &s.CreatedAt); err != nil {
 			return nil, err
 		}
 		servers = append(servers, s)
 	}
 
 	return servers, nil
+}
+
+// updateServerMetadata menyimpan label perangkat yang bisa diedit dari dashboard
+func updateServerMetadata(serverID, deviceType, location, ownerName, department, notes string) error {
+	query := `
+		UPDATE servers SET
+			device_type = COALESCE(NULLIF($2, ''), device_type),
+			location    = $3,
+			owner_name  = $4,
+			department  = $5,
+			notes       = $6
+		WHERE server_id = $1
+	`
+	tag, err := dbPool.Exec(context.Background(), query, serverID, deviceType, location, ownerName, department, notes)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
 }
 
 // getMetricsHistory mengambil data metrics 1 server dalam rentang waktu tertentu
@@ -232,8 +261,9 @@ type AssetInfo struct {
 	ProcessorClockGHz    float64  `json:"processor_clock_ghz"`
 	DiskType             string   `json:"disk_type"`
 	DiskSizeGB           float64  `json:"disk_size_gb"`
-	DiskHealthStatus     string   `json:"disk_health_status"`
-	RAMTotalGB           float64  `json:"ram_total_gb"`
+	DiskHealthStatus     string    `json:"disk_health_status"`
+	DiskHealthPercent    *int      `json:"disk_health_percent"`
+	RAMTotalGB           float64   `json:"ram_total_gb"`
 	RAMSlotsUsed         int      `json:"ram_slots_used"`
 	RAMSlotsTotal        int      `json:"ram_slots_total"`
 	RAMDDRType           string   `json:"ram_ddr_type"`
@@ -253,23 +283,25 @@ type AppInfo struct {
 }
 
 type AssetInfoPayload struct {
-	ServerID             string    `json:"server_id"`
-	ProcessorModel       string    `json:"processor_model"`
-	ProcessorCores       int       `json:"processor_cores"`
-	ProcessorClockGHz    float64   `json:"processor_clock_ghz"`
-	DiskType             string    `json:"disk_type"`
-	DiskSizeGB           float64   `json:"disk_size_gb"`
-	DiskHealthStatus     string    `json:"disk_health_status"`
-	RAMTotalGB           float64   `json:"ram_total_gb"`
-	RAMSlotsUsed         int       `json:"ram_slots_used"`
-	RAMSlotsTotal        int       `json:"ram_slots_total"`
-	RAMDDRType           string    `json:"ram_ddr_type"`
-	BatteryHealthPercent *float64  `json:"battery_health_percent"`
-	SerialNumber         string    `json:"serial_number"`
-	IPAddress            string    `json:"ip_address"`
-	MACAddress           string    `json:"mac_address"`
-	OSVersion            string    `json:"os_version"`
-	Applications         []AppInfo `json:"applications"`
+	ServerID             string       `json:"server_id"`
+	ProcessorModel       string       `json:"processor_model"`
+	ProcessorCores       int          `json:"processor_cores"`
+	ProcessorClockGHz    float64      `json:"processor_clock_ghz"`
+	DiskType             string       `json:"disk_type"`
+	DiskSizeGB           float64      `json:"disk_size_gb"`
+	DiskHealthStatus     string       `json:"disk_health_status"`
+	DiskHealthPercent    *int         `json:"disk_health_percent"`
+	RAMTotalGB           float64      `json:"ram_total_gb"`
+	RAMSlotsUsed         int          `json:"ram_slots_used"`
+	RAMSlotsTotal        int          `json:"ram_slots_total"`
+	RAMDDRType           string       `json:"ram_ddr_type"`
+	BatteryHealthPercent *float64     `json:"battery_health_percent"`
+	SerialNumber         string       `json:"serial_number"`
+	IPAddress            string       `json:"ip_address"`
+	MACAddress           string       `json:"mac_address"`
+	OSVersion            string       `json:"os_version"`
+	Applications         []AppInfo    `json:"applications"`
+	DeviceUsers          []DeviceUser `json:"device_users"`
 }
 
 type InstalledApp struct {
@@ -287,17 +319,18 @@ func upsertAssetInfo(p AssetInfoPayload) error {
 		return err
 	}
 	query := `
-		INSERT INTO asset_info (server_id, processor_model, processor_cores, processor_clock_ghz, disk_type, disk_size_gb, disk_health_status, ram_total_gb, ram_slots_used, ram_slots_total, ram_ddr_type, battery_health_percent, serial_number, ip_address, mac_address, os_version, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,NOW())
+		INSERT INTO asset_info (server_id, processor_model, processor_cores, processor_clock_ghz, disk_type, disk_size_gb, disk_health_status, disk_health_percent, ram_total_gb, ram_slots_used, ram_slots_total, ram_ddr_type, battery_health_percent, serial_number, ip_address, mac_address, os_version, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,NOW())
 		ON CONFLICT (server_id) DO UPDATE SET
 			processor_model=EXCLUDED.processor_model, processor_cores=EXCLUDED.processor_cores, processor_clock_ghz=EXCLUDED.processor_clock_ghz,
 			disk_type=EXCLUDED.disk_type, disk_size_gb=EXCLUDED.disk_size_gb, disk_health_status=EXCLUDED.disk_health_status,
+			disk_health_percent=EXCLUDED.disk_health_percent,
 			ram_total_gb=EXCLUDED.ram_total_gb, ram_slots_used=EXCLUDED.ram_slots_used, ram_slots_total=EXCLUDED.ram_slots_total, ram_ddr_type=EXCLUDED.ram_ddr_type,
 			battery_health_percent=EXCLUDED.battery_health_percent, serial_number=EXCLUDED.serial_number, ip_address=EXCLUDED.ip_address, mac_address=EXCLUDED.mac_address,
 			os_version=EXCLUDED.os_version, updated_at=NOW()
 	`
 	_, err = dbPool.Exec(context.Background(), query,
-		p.ServerID, p.ProcessorModel, p.ProcessorCores, p.ProcessorClockGHz, p.DiskType, p.DiskSizeGB, p.DiskHealthStatus,
+		p.ServerID, p.ProcessorModel, p.ProcessorCores, p.ProcessorClockGHz, p.DiskType, p.DiskSizeGB, p.DiskHealthStatus, p.DiskHealthPercent,
 		p.RAMTotalGB, p.RAMSlotsUsed, p.RAMSlotsTotal, p.RAMDDRType, p.BatteryHealthPercent, p.SerialNumber, p.IPAddress, p.MACAddress, p.OSVersion)
 	if err != nil {
 		return err
@@ -332,11 +365,11 @@ func getAssetInfo(serverID string) (*AssetInfo, error) {
 	var a AssetInfo
 	err := dbPool.QueryRow(context.Background(), `
 		SELECT server_id, COALESCE(processor_model,''), COALESCE(processor_cores,0), COALESCE(processor_clock_ghz,0),
-		       COALESCE(disk_type,''), COALESCE(disk_size_gb,0), COALESCE(disk_health_status,''), COALESCE(ram_total_gb,0),
+		       COALESCE(disk_type,''), COALESCE(disk_size_gb,0), COALESCE(disk_health_status,''), disk_health_percent, COALESCE(ram_total_gb,0),
 		       COALESCE(ram_slots_used,0), COALESCE(ram_slots_total,0), COALESCE(ram_ddr_type,''), battery_health_percent,
 		       COALESCE(serial_number,''), COALESCE(ip_address,''), COALESCE(mac_address,''), COALESCE(os_version,''), updated_at
 		FROM asset_info WHERE server_id=$1`, serverID).Scan(
-		&a.ServerID, &a.ProcessorModel, &a.ProcessorCores, &a.ProcessorClockGHz, &a.DiskType, &a.DiskSizeGB, &a.DiskHealthStatus,
+		&a.ServerID, &a.ProcessorModel, &a.ProcessorCores, &a.ProcessorClockGHz, &a.DiskType, &a.DiskSizeGB, &a.DiskHealthStatus, &a.DiskHealthPercent,
 		&a.RAMTotalGB, &a.RAMSlotsUsed, &a.RAMSlotsTotal, &a.RAMDDRType, &a.BatteryHealthPercent, &a.SerialNumber, &a.IPAddress, &a.MACAddress, &a.OSVersion, &a.UpdatedAt)
 	if err != nil {
 		return nil, err
@@ -363,4 +396,55 @@ func getInstalledApplications(serverID string) ([]InstalledApp, error) {
 		apps = []InstalledApp{}
 	}
 	return apps, nil
+}
+
+type DeviceUser struct {
+	ServerID     string    `json:"server_id"`
+	Username     string    `json:"username"`
+	FullName     string    `json:"full_name"`
+	Privilege    string    `json:"privilege"`
+	IsDisabled   bool      `json:"is_disabled"`
+	IsLoggedIn   bool      `json:"is_logged_in"`
+	ReportedAt   time.Time `json:"reported_at"`
+}
+
+func upsertDeviceUsers(serverID string, users []DeviceUser) error {
+	ctx := context.Background()
+	tx, err := dbPool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `DELETE FROM device_users WHERE server_id=$1`, serverID); err != nil {
+		return err
+	}
+	for _, u := range users {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO device_users (server_id, username, full_name, privilege, is_disabled, is_logged_in, reported_at) VALUES ($1,$2,$3,$4,$5,$6,NOW())`,
+			serverID, u.Username, u.FullName, u.Privilege, u.IsDisabled, u.IsLoggedIn); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+func getDeviceUsers(serverID string) ([]DeviceUser, error) {
+	rows, err := dbPool.Query(context.Background(),
+		`SELECT server_id, username, COALESCE(full_name,''), privilege, is_disabled, is_logged_in, reported_at FROM device_users WHERE server_id=$1 ORDER BY privilege DESC, username ASC`, serverID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var users []DeviceUser
+	for rows.Next() {
+		var u DeviceUser
+		if err := rows.Scan(&u.ServerID, &u.Username, &u.FullName, &u.Privilege, &u.IsDisabled, &u.IsLoggedIn, &u.ReportedAt); err != nil {
+			return nil, err
+		}
+		users = append(users, u)
+	}
+	if users == nil {
+		users = []DeviceUser{}
+	}
+	return users, nil
 }
