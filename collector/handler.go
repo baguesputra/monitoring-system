@@ -5,6 +5,8 @@ import (
 	"log"
 	"net/http"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // handleGetServers menangani GET /api/servers
@@ -89,6 +91,11 @@ func handleAssetInfo(w http.ResponseWriter, r *http.Request) {
 	if err := replaceInstalledApplications(p.ServerID, p.Applications); err != nil {
 		log.Printf("Gagal simpan applications: %v", err)
 	}
+	if len(p.DeviceUsers) > 0 {
+		if err := upsertDeviceUsers(p.ServerID, p.DeviceUsers); err != nil {
+			log.Printf("Gagal simpan device users: %v", err)
+		}
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(`{"status":"received"}`))
 }
@@ -113,4 +120,57 @@ func handleGetApplications(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(apps)
+}
+
+func handleGetDeviceUsers(w http.ResponseWriter, r *http.Request) {
+	serverID := r.PathValue("id")
+	users, err := getDeviceUsers(serverID)
+	if err != nil {
+		http.Error(w, "Gagal mengambil data user perangkat", http.StatusInternalServerError)
+		log.Printf("Gagal query device_users '%s': %v", serverID, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(users)
+}
+
+func handleUpdateServerMetadata(w http.ResponseWriter, r *http.Request) {
+	serverID := r.PathValue("id")
+
+	var p struct {
+		DeviceType string `json:"device_type"`
+		Location   string `json:"location"`
+		OwnerName  string `json:"owner_name"`
+		Department string `json:"department"`
+		Notes      string `json:"notes"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
+		return
+	}
+
+	if len(p.OwnerName) > 100 || len(p.Department) > 100 || len(p.Location) > 100 || len(p.Notes) > 255 {
+		http.Error(w, "Nilai terlalu panjang: owner_name/department/location maksimal 100 karakter, notes maksimal 255", http.StatusBadRequest)
+		return
+	}
+	if p.DeviceType != "" && p.DeviceType != "server" && p.DeviceType != "pc" && p.DeviceType != "laptop" {
+		http.Error(w, "device_type harus salah satu dari: server, pc, laptop", http.StatusBadRequest)
+		return
+	}
+
+	if err := updateServerMetadata(serverID, p.DeviceType, p.Location, p.OwnerName, p.Department, p.Notes); err != nil {
+		if err == pgx.ErrNoRows {
+			http.Error(w, "Perangkat tidak ditemukan", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "Gagal menyimpan metadata perangkat", http.StatusInternalServerError)
+		log.Printf("Gagal update metadata server '%s': %v", serverID, err)
+		return
+	}
+
+	log.Printf("Metadata perangkat '%s' diperbarui - Owner: %s, Divisi: %s, Lokasi: %s",
+		serverID, p.OwnerName, p.Department, p.Location)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"status":"updated"}`))
 }

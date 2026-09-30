@@ -21,6 +21,19 @@ type MetricsPayload struct {
 	Timestamp time.Time `json:"timestamp"`
 }
 
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func main() {
 	_ = godotenv.Load("../.env")
 	_ = godotenv.Load()
@@ -38,6 +51,8 @@ func main() {
 	mux.HandleFunc("GET /api/servers/{id}/status", handleGetServerStatus)
 	mux.HandleFunc("GET /api/servers/{id}/asset-info", handleGetAssetInfo)
 	mux.HandleFunc("GET /api/servers/{id}/applications", handleGetApplications)
+	mux.HandleFunc("GET /api/servers/{id}/users", handleGetDeviceUsers)
+	mux.HandleFunc("PUT /api/servers/{id}/metadata", handleUpdateServerMetadata)
 
 	port := os.Getenv("COLLECTOR_PORT")
 	if port == "" {
@@ -45,7 +60,7 @@ func main() {
 	}
 
 	log.Printf("Collector API starting on :%s...", port)
-	if err := http.ListenAndServe(":"+port, mux); err != nil {
+	if err := http.ListenAndServe(":"+port, corsMiddleware(mux)); err != nil {
 		log.Fatalf("Server gagal jalan: %v", err)
 	}
 }
