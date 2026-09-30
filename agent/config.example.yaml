@@ -1,4 +1,4 @@
-server_id: "test-01"
+server_id: "PC-HRD-BAGUS"
 device_type: "pc"
 collector_url: "http://localhost:8081"
 interval_seconds: 5
