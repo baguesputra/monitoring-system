@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -50,6 +51,9 @@ type ServerStatus struct {
 }
 
 var dbPool *pgxpool.Pool
+
+// ErrServerIDTaken dikembalikan saat server_id baru sudah dipakai perangkat lain.
+var ErrServerIDTaken = errors.New("server_id sudah dipakai perangkat lain")
 
 func initDB() {
 	dbHost := os.Getenv("DB_HOST")
@@ -178,6 +182,43 @@ func updateServerMetadata(serverID, deviceType, location, ownerName, department,
 	return nil
 }
 
+// renameServerID mengganti server_id danopters cascade ke seluruh tabel anak
+// (metrics, service_status, asset_info, installed_applications, device_users).
+// Memerlukan FK dengan ON UPDATE CASCADE — lihat migrasi 006.
+func renameServerID(oldID, newID string) error {
+	ctx := context.Background()
+	tx, err := dbPool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var taken bool
+	if err := tx.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM servers WHERE server_id = $1)`, newID).Scan(&taken); err != nil {
+		return err
+	}
+	if taken {
+		return ErrServerIDTaken
+	}
+
+	tag, err := tx.Exec(ctx, `UPDATE servers SET server_id = $1 WHERE server_id = $2`, newID, oldID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+
+	// hostname biasanya masih server_id lama; ikut samarkan supaya tidak membingungkan
+	if _, err := tx.Exec(ctx,
+		`UPDATE servers SET hostname = $1 WHERE server_id = $2 AND hostname = $3`, newID, newID, oldID); err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
+}
+
 // getMetricsHistory mengambil data metrics 1 server dalam rentang waktu tertentu
 func getMetricsHistory(serverID string, since time.Time) ([]MetricRecord, error) {
 	query := `
@@ -255,23 +296,23 @@ func getLatestServerStatus(serverID string) (*ServerStatus, error) {
 }
 
 type AssetInfo struct {
-	ServerID             string   `json:"server_id"`
-	ProcessorModel       string   `json:"processor_model"`
-	ProcessorCores       int      `json:"processor_cores"`
-	ProcessorClockGHz    float64  `json:"processor_clock_ghz"`
-	DiskType             string   `json:"disk_type"`
-	DiskSizeGB           float64  `json:"disk_size_gb"`
+	ServerID             string    `json:"server_id"`
+	ProcessorModel       string    `json:"processor_model"`
+	ProcessorCores       int       `json:"processor_cores"`
+	ProcessorClockGHz    float64   `json:"processor_clock_ghz"`
+	DiskType             string    `json:"disk_type"`
+	DiskSizeGB           float64   `json:"disk_size_gb"`
 	DiskHealthStatus     string    `json:"disk_health_status"`
 	DiskHealthPercent    *int      `json:"disk_health_percent"`
 	RAMTotalGB           float64   `json:"ram_total_gb"`
-	RAMSlotsUsed         int      `json:"ram_slots_used"`
-	RAMSlotsTotal        int      `json:"ram_slots_total"`
-	RAMDDRType           string   `json:"ram_ddr_type"`
-	BatteryHealthPercent *float64 `json:"battery_health_percent"`
-	SerialNumber         string   `json:"serial_number"`
-	IPAddress            string   `json:"ip_address"`
-	MACAddress           string   `json:"mac_address"`
-	OSVersion            string   `json:"os_version"`
+	RAMSlotsUsed         int       `json:"ram_slots_used"`
+	RAMSlotsTotal        int       `json:"ram_slots_total"`
+	RAMDDRType           string    `json:"ram_ddr_type"`
+	BatteryHealthPercent *float64  `json:"battery_health_percent"`
+	SerialNumber         string    `json:"serial_number"`
+	IPAddress            string    `json:"ip_address"`
+	MACAddress           string    `json:"mac_address"`
+	OSVersion            string    `json:"os_version"`
 	UpdatedAt            time.Time `json:"updated_at"`
 }
 
@@ -399,13 +440,13 @@ func getInstalledApplications(serverID string) ([]InstalledApp, error) {
 }
 
 type DeviceUser struct {
-	ServerID     string    `json:"server_id"`
-	Username     string    `json:"username"`
-	FullName     string    `json:"full_name"`
-	Privilege    string    `json:"privilege"`
-	IsDisabled   bool      `json:"is_disabled"`
-	IsLoggedIn   bool      `json:"is_logged_in"`
-	ReportedAt   time.Time `json:"reported_at"`
+	ServerID   string    `json:"server_id"`
+	Username   string    `json:"username"`
+	FullName   string    `json:"full_name"`
+	Privilege  string    `json:"privilege"`
+	IsDisabled bool      `json:"is_disabled"`
+	IsLoggedIn bool      `json:"is_logged_in"`
+	ReportedAt time.Time `json:"reported_at"`
 }
 
 func upsertDeviceUsers(serverID string, users []DeviceUser) error {

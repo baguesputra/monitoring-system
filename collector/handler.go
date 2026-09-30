@@ -2,8 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -173,4 +175,62 @@ func handleUpdateServerMetadata(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(`{"status":"updated"}`))
+}
+
+func handleRenameServer(w http.ResponseWriter, r *http.Request) {
+	serverID := r.PathValue("id")
+
+	var p struct {
+		NewServerID string `json:"new_server_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
+		return
+	}
+
+	newID := strings.TrimSpace(p.NewServerID)
+	if newID == "" {
+		http.Error(w, "new_server_id tidak boleh kosong", http.StatusBadRequest)
+		return
+	}
+	if len(newID) > 50 {
+		http.Error(w, "new_server_id maksimal 50 karakter", http.StatusBadRequest)
+		return
+	}
+	// Izinkan huruf, angka, titik, underscore, dan tanda hubung saja.
+	// Karakter lain bisa merusak URL dashboard (/api/servers/{id}/...) dan nama file.
+	for _, r := range newID {
+		valid := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') || r == '.' || r == '_' || r == '-'
+		if !valid {
+			http.Error(w, "new_server_id hanya boleh berisi huruf, angka, titik, underscore, dan tanda hubung", http.StatusBadRequest)
+			return
+		}
+	}
+	if newID == serverID {
+		http.Error(w, "new_server_id sama dengan server_id sekarang", http.StatusBadRequest)
+		return
+	}
+
+	if err := renameServerID(serverID, newID); err != nil {
+		switch {
+		case errors.Is(err, ErrServerIDTaken):
+			http.Error(w, "Nama '"+newID+"' sudah dipakai perangkat lain. Pilih nama lain.", http.StatusConflict)
+		case errors.Is(err, pgx.ErrNoRows):
+			http.Error(w, "Perangkat tidak ditemukan", http.StatusNotFound)
+		default:
+			http.Error(w, "Gagal mengganti nama perangkat", http.StatusInternalServerError)
+			log.Printf("Gagal rename server '%s' -> '%s': %v", serverID, newID, err)
+		}
+		return
+	}
+
+	log.Printf("Perangkat di-rename: '%s' -> '%s' (histori ikut termigrasi)", serverID, newID)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"status":        "renamed",
+		"old_server_id": serverID,
+		"new_server_id": newID,
+	})
 }

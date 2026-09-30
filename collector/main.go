@@ -11,14 +11,14 @@ import (
 )
 
 type MetricsPayload struct {
-	ServerID  string    `json:"server_id"`
-	CPU       float64   `json:"cpu_percent"`
-	RAM       float64   `json:"ram_percent"`
-	Disk      float64   `json:"disk_percent"`
-	NetworkSentBps  float64         `json:"network_sent_bps"`
-	NetworkRecvBps  float64         `json:"network_recv_bps"`
-	ServiceStatus   map[string]bool `json:"service_status"`
-	Timestamp time.Time `json:"timestamp"`
+	ServerID       string          `json:"server_id"`
+	CPU            float64         `json:"cpu_percent"`
+	RAM            float64         `json:"ram_percent"`
+	Disk           float64         `json:"disk_percent"`
+	NetworkSentBps float64         `json:"network_sent_bps"`
+	NetworkRecvBps float64         `json:"network_recv_bps"`
+	ServiceStatus  map[string]bool `json:"service_status"`
+	Timestamp      time.Time       `json:"timestamp"`
 }
 
 func corsMiddleware(next http.Handler) http.Handler {
@@ -53,6 +53,7 @@ func main() {
 	mux.HandleFunc("GET /api/servers/{id}/applications", handleGetApplications)
 	mux.HandleFunc("GET /api/servers/{id}/users", handleGetDeviceUsers)
 	mux.HandleFunc("PUT /api/servers/{id}/metadata", handleUpdateServerMetadata)
+	mux.HandleFunc("PUT /api/servers/{id}/rename", handleRenameServer)
 
 	port := os.Getenv("COLLECTOR_PORT")
 	if port == "" {
