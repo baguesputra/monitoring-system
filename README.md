@@ -1,4 +1,4 @@
-# Monitoring System - Amanah Medical Centre
+- Amanah Medical Centre
 
 Sistem monitoring infrastruktur server internal untuk memantau kondisi
 CPU, RAM, Disk, Network, dan status service di seluruh server RS secara real-time.
