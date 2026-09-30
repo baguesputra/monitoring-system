@@ -1,0 +1,277 @@
+@import "tailwindcss";
+
+/* Font Faces - using system fonts that approximate the aesthetic */
+@font-face {
+  font-family: 'Fraunces';
+  src: local('Georgia'), local('Times New Roman'), local('serif');
+  font-weight: 400 900;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'IBM Plex Mono';
+  src: local('SF Mono'), local('Fira Mono'), local('Menlo'), local('Consolas'), local('monospace');
+  font-weight: 300 700;
+  font-display: swap;
+}
+
+@theme {
+  /* The Gilded Ledger Palette */
+  --color-parchment: #F4F1EA;
+  --color-parchment-dark: #E8E0D4;
+  --color-ink: #2C2621;
+  --color-ink-muted: #5C5348;
+  --color-gold-leaf: #C5A059;
+  --color-gold-dim: #A88B4A;
+  --color-forest-moss: #4A5D4E;
+  --color-forest-deep: #364238;
+  --color-cardinal: #8B1E1E;
+  --color-cardinal-dim: #6B1818;
+  --color-iron: #4A4540;
+  --color-iron-light: #8B857D;
+
+  --font-display: 'Fraunces', Georgia, 'Times New Roman', serif;
+  --font-mono: 'IBM Plex Mono', 'SF Mono', 'Fira Mono', Menlo, Consolas, monospace;
+  --font-body: 'IBM Plex Mono', 'SF Mono', 'Fira Mono', Menlo, Consolas, monospace;
+
+  --shadow-wax: 0 4px 12px rgba(44, 38, 33, 0.15), 0 1px 3px rgba(44, 38, 33, 0.1);
+  --shadow-seal: 0 8px 24px rgba(197, 160, 89, 0.25), 0 2px 8px rgba(44, 38, 33, 0.1);
+}
+
+@layer base {
+  html {
+    background-color: #F4F1EA;
+    background-image: 
+      radial-gradient(ellipse 80% 50% at 50% -20%, rgba(197,160,89,0.08), transparent),
+      url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
+  }
+
+  body {
+    background-color: transparent;
+    color: #2C2621;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 14px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  ::selection {
+    background-color: #C5A059;
+    color: #2C2621;
+  }
+
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #E8E0D4;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #C5A059;
+    border-radius: 0;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #A88B4A;
+  }
+}
+
+@layer utilities {
+  .font-display {
+    font-family: var(--font-display);
+    letter-spacing: -0.02em;
+  }
+
+  .font-mono-ui {
+    font-family: var(--font-mono);
+    font-feature-settings: 'tnum' 1, 'liga' 0;
+  }
+
+  .text-ink {
+    color: var(--color-ink);
+  }
+
+  .text-ink-muted {
+    color: var(--color-ink-muted);
+  }
+
+  .text-gold {
+    color: var(--color-gold-leaf);
+  }
+
+  .text-moss {
+    color: var(--color-forest-moss);
+  }
+
+  .text-cardinal {
+    color: var(--color-cardinal);
+  }
+
+  .bg-parchment {
+    background-color: var(--color-parchment);
+  }
+
+  .bg-parchment-dark {
+    background-color: var(--color-parchment-dark);
+  }
+
+  .border-ink {
+    border-color: var(--color-ink);
+  }
+
+  .border-ink-muted {
+    border-color: var(--color-ink-muted);
+  }
+
+  .border-gold {
+    border-color: var(--color-gold-leaf);
+  }
+
+  .border-iron {
+    border-color: var(--color-iron);
+  }
+
+  /* Ledger ruling lines */
+  .ruled {
+    border-bottom: 1px solid var(--color-ink-muted);
+    border-opacity: 0.3;
+  }
+
+  .ruled-horizontal {
+    border-top: 1px solid var(--color-ink-muted);
+    border-opacity: 0.2;
+  }
+
+  .ruled-vertical {
+    border-left: 1px solid var(--color-ink-muted);
+    border-opacity: 0.2;
+  }
+
+  /* Wax Seal Status Badges */
+  .wax-seal {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 9999px;
+    padding: 0.375rem 0.875rem;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    box-shadow: var(--shadow-wax);
+    border: 1px solid transparent;
+  }
+
+  .wax-seal::before {
+    content: '';
+    position: absolute;
+    inset: -2px;
+    border-radius: inherit;
+    opacity: 0.15;
+    filter: blur(4px);
+  }
+
+  .wax-seal-normal {
+    background: linear-gradient(135deg, #4A5D4E 0%, #364238 100%);
+    color: #F4F1EA;
+    border-color: #4A5D4E;
+  }
+  .wax-seal-normal::before { background: #4A5D4E; }
+
+  .wax-seal-warning {
+    background: linear-gradient(135deg, #C5A059 0%, #A88B4A 100%);
+    color: #2C2621;
+    border-color: #C5A059;
+  }
+  .wax-seal-warning::before { background: #C5A059; }
+
+  .wax-seal-critical {
+    background: linear-gradient(135deg, #8B1E1E 0%, #6B1818 100%);
+    color: #F4F1EA;
+    border-color: #8B1E1E;
+  }
+  .wax-seal-critical::before { background: #8B1E1E; }
+
+  .wax-seal-offline {
+    background: linear-gradient(135deg, #8B857D 0%, #5C5348 100%);
+    color: #F4F1EA;
+    border-color: #8B857D;
+  }
+  .wax-seal-offline::before { background: #8B857D; }
+
+  /* Ledger Card */
+  .ledger-card {
+    background: var(--color-parchment);
+    border: 1px solid var(--color-ink-muted);
+    border-opacity: 0.3;
+    border-radius: 0;
+    box-shadow: 
+      0 1px 0 rgba(255,255,255,0.5) inset,
+      0 -1px 0 rgba(0,0,0,0.02) inset,
+      var(--shadow-wax);
+  }
+
+  .ledger-card-elevated {
+    background: var(--color-parchment);
+    border: 1px solid var(--color-ink-muted);
+    border-opacity: 0.4;
+    border-radius: 0;
+    box-shadow: 
+      0 8px 24px rgba(44,38,33,0.08),
+      0 2px 8px rgba(44,38,33,0.05),
+      0 1px 0 rgba(255,255,255,0.5) inset;
+  }
+
+  /* Gold divider */
+  .divider-gold {
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--color-gold-leaf), transparent);
+    border: none;
+    margin: 1.5rem 0;
+  }
+
+  .divider-ink {
+    height: 1px;
+    background: var(--color-ink-muted);
+    opacity: 0.2;
+    border: none;
+    margin: 1rem 0;
+  }
+
+  /* Stamp effect */
+  .stamp {
+    position: relative;
+    transform: rotate(-2deg);
+  }
+  .stamp::after {
+    content: '';
+    position: absolute;
+    inset: -4px;
+    border: 2px solid currentColor;
+    border-radius: 4px;
+    opacity: 0.4;
+    pointer-events: none;
+  }
+
+  /* Focus styles */
+  .focus-ring:focus-visible {
+    outline: 2px solid var(--color-gold-leaf);
+    outline-offset: 2px;
+  }
+
+  /* Reduced motion */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
