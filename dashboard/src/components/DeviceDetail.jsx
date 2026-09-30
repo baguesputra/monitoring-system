@@ -75,7 +75,7 @@ const CustomTooltip = ({ active, payload, label }) => {
   return null;
 };
 
-export default function DeviceDetail({ serverId, onBack }) {
+export default function DeviceDetail({ serverId, onBack, onRenamed }) {
   const [metrics, setMetrics] = useState([]);
   const [status, setStatus] = useState(null);
   const [asset, setAsset] = useState(null);
@@ -87,6 +87,9 @@ export default function DeviceDetail({ serverId, onBack }) {
   const [draft, setDraft] = useState({ owner_name: '', department: '', location: '', notes: '', device_type: '' });
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState(null);
+  const [renaming, setRenaming] = useState(false);
+  const [renameDraft, setRenameDraft] = useState('');
+  const [renameMsg, setRenameMsg] = useState(null);
 
   const fetchDetail = async () => {
     try {
@@ -140,6 +143,31 @@ export default function DeviceDetail({ serverId, onBack }) {
     const interval = setInterval(fetchDetail, 10000);
     return () => clearInterval(interval);
   }, [serverId, range]);
+
+  const renameServer = async () => {
+    setRenaming(true);
+    setRenameMsg(null);
+    try {
+      const res = await fetch(`/api/servers/${serverId}/rename`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ new_server_id: renameDraft.trim() }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setRenameMsg({ ok: true, text: `Nama diganti menjadi "${data.new_server_id}"` });
+        setRenaming(false);
+        setRenameDraft('');
+        onRenamed(data.new_server_id);
+      } else {
+        setRenameMsg({ ok: false, text: (data.detail || data.text || 'Gagal ganti nama').replace(/^.*?\n/, '') });
+      }
+    } catch {
+      setRenameMsg({ ok: false, text: 'Gagal terhubung ke collector' });
+    } finally {
+      setRenaming(false);
+    }
+  };
 
   const saveMetadata = async () => {
     setSaving(true);
@@ -241,21 +269,82 @@ export default function DeviceDetail({ serverId, onBack }) {
               )}
             </div>
 
-            {editing ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <label className="block">
-                  <span className="font-mono-ui text-[10px] text-ink-muted uppercase tracking-wider">Assigned To</span>
-                  <input
-                    type="text"
-                    value={draft.owner_name}
-                    onChange={(e) => setDraft({ ...draft, owner_name: e.target.value })}
-                    placeholder="Nama pemegang perangkat"
-                    maxLength={100}
-                    className="mt-1.5 w-full bg-parchment border border-ink-muted/40 px-3 py-2 text-sm text-ink focus:outline-none focus:border-gold transition focus-ring rounded-sm"
-                  />
-                </label>
-                <label className="block">
-                  <span className="font-mono-ui text-[10px] text-ink-muted uppercase tracking-wider">Department</span>
+            <div className="mb-6 pb-6 border-b border-ink-muted/20">
+              <div className="flex flex-wrap items-end gap-3">
+                <div className="flex-1 min-w-[240px]">
+                  <p className="font-mono-ui text-[10px] text-ink-muted uppercase tracking-wider m-0 mb-1.5">
+                    Device Name (server_id)
+                  </p>
+                  {renaming ? (
+                    <input
+                      type="text"
+                      value={renameDraft}
+                      onChange={(e) => setRenameDraft(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && renameDraft.trim() && renameServer()}
+                      placeholder={serverId}
+                      maxLength={50}
+                      autoFocus
+                      className="w-full bg-parchment border border-gold px-3 py-2 font-mono-ui text-sm text-ink focus:outline-none focus:border-gold-dim transition focus-ring rounded-sm"
+                    />
+                  ) : (
+                    <p className="font-display text-2xl font-semibold text-ink m-0">{serverId}</p>
+                  )}
+                  <p className="font-mono-ui text-[10px] text-ink-muted mt-1.5 m-0">
+                    Huruf, angka, titik, underscore, dan tanda hubung. Maksimal 50 karakter.
+                  </p>
+                </div>
+
+                {renaming ? (
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={renameServer}
+                      disabled={!renameDraft.trim() || renameDraft.trim() === serverId}
+                      className="flex items-center gap-2 px-4 py-2 bg-ink text-parchment text-[11px] font-mono-ui uppercase tracking-wider hover:bg-ink/90 transition focus-ring rounded-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      <Save className="w-4 h-4" strokeWidth={2} />
+                      {renaming ? 'Saving...' : 'Rename'}
+                    </button>
+                    <button
+                      onClick={() => { setRenaming(false); setRenameDraft(''); setRenameMsg(null); }}
+                      className="flex items-center gap-2 px-4 py-2 text-[11px] font-mono-ui uppercase tracking-wider text-ink-muted border border-ink-muted/40 hover:text-ink transition focus-ring rounded-sm"
+                    >
+                      <X className="w-4 h-4" strokeWidth={2} />
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => { setRenaming(true); setRenameDraft(serverId); setRenameMsg(null); }}
+                    className="flex items-center gap-1.5 px-3 py-2 text-[10px] font-mono-ui uppercase tracking-wider text-ink-muted border border-ink-muted/40 hover:text-ink hover:border-ink/60 transition focus-ring rounded-sm"
+                  >
+                    <Pencil className="w-3 h-3" strokeWidth={2} />
+                    Rename
+                  </button>
+                )}
+              </div>
+
+              {renameMsg && (
+                <p className={`font-mono-ui text-[11px] mt-3 mb-0 ${renameMsg.ok ? 'text-moss' : 'text-cardinal'}`}>
+                  {renameMsg.text}
+                </p>
+              )}
+            </div>
+
+              {editing ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <label className="block">
+                    <span className="font-mono-ui text-[10px] text-ink-muted uppercase tracking-wider">Assigned To</span>
+                    <input
+                      type="text"
+                      value={draft.owner_name}
+                      onChange={(e) => setDraft({ ...draft, owner_name: e.target.value })}
+                      placeholder="Nama pemegang perangkat"
+                      maxLength={100}
+                      className="mt-1.5 w-full bg-parchment border border-ink-muted/40 px-3 py-2 text-sm text-ink focus:outline-none focus:border-gold transition focus-ring rounded-sm"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="font-mono-ui text-[10px] text-ink-muted uppercase tracking-wider">Department</span>
                   <input
                     type="text"
                     value={draft.department}

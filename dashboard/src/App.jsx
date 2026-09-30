@@ -19,6 +19,10 @@ export default function App() {
     setActiveTab('overview');
   };
 
+  const handleRenamed = (newServerId) => {
+    setSelectedServerId(newServerId);
+  };
+
   const tabs = [
     { id: 'overview', label: 'Daily Ledger', icon: Activity, desc: 'Telemetry overview' },
     { id: 'assets', label: 'Estate Inventory', icon: HardDrive, desc: 'Hardware registers' },
@@ -76,7 +80,7 @@ export default function App() {
       {/* Main Content - The Ledger */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-6 py-8">
         {activeTab === 'overview' && <Overview onSelectDevice={handleSelectDevice} />}
-        {activeTab === 'detail' && selectedServerId && <DeviceDetail serverId={selectedServerId} onBack={handleBackToOverview} />}
+        {activeTab === 'detail' && selectedServerId && <DeviceDetail serverId={selectedServerId} onBack={handleBackToOverview} onRenamed={handleRenamed} />}
         {activeTab === 'assets' && <AssetInventory />}
         {activeTab === 'apps' && <Applications />}
       </main>
