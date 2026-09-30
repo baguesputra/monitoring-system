@@ -10,6 +10,7 @@ type AssetInfo struct {
 	DiskType             string    `json:"disk_type"`
 	DiskSizeGB           float64   `json:"disk_size_gb"`
 	DiskHealthStatus     string    `json:"disk_health_status"`
+	DiskHealthPercent    *int      `json:"disk_health_percent"`
 	RAMTotalGB           float64   `json:"ram_total_gb"`
 	RAMSlotsUsed         int       `json:"ram_slots_used"`
 	RAMSlotsTotal        int       `json:"ram_slots_total"`
@@ -18,8 +19,17 @@ type AssetInfo struct {
 	SerialNumber         string    `json:"serial_number"`
 	IPAddress            string    `json:"ip_address"`
 	MACAddress           string    `json:"mac_address"`
-	OSVersion            string    `json:"os_version"`
-	Applications         []AppInfo `json:"applications"`
+	OSVersion            string       `json:"os_version"`
+	Applications         []AppInfo    `json:"applications"`
+	DeviceUsers          []DeviceUser `json:"device_users"`
+}
+
+type DeviceUser struct {
+	Username   string `json:"username"`
+	FullName   string `json:"full_name"`
+	Privilege  string `json:"privilege"`
+	IsDisabled bool   `json:"is_disabled"`
+	IsLoggedIn bool   `json:"is_logged_in"`
 }
 
 type AppInfo struct {

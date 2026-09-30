@@ -5,6 +5,9 @@ package main
 import (
 	"log"
 	"net"
+	"os/exec"
+	"strconv"
+	"strings"
 
 	"github.com/shirou/gopsutil/v3/host"
 	"github.com/yusufpapurcu/wmi"
@@ -12,23 +15,25 @@ import (
 )
 
 type AssetInfo struct {
-	ServerID             string    `json:"server_id"`
-	ProcessorModel       string    `json:"processor_model"`
-	ProcessorCores       int       `json:"processor_cores"`
-	ProcessorClockGHz    float64   `json:"processor_clock_ghz"`
-	DiskType             string    `json:"disk_type"`
-	DiskSizeGB           float64   `json:"disk_size_gb"`
-	DiskHealthStatus     string    `json:"disk_health_status"`
-	RAMTotalGB           float64   `json:"ram_total_gb"`
-	RAMSlotsUsed         int       `json:"ram_slots_used"`
-	RAMSlotsTotal        int       `json:"ram_slots_total"`
-	RAMDDRType           string    `json:"ram_ddr_type"`
-	BatteryHealthPercent *float64  `json:"battery_health_percent"`
-	SerialNumber         string    `json:"serial_number"`
-	IPAddress            string    `json:"ip_address"`
-	MACAddress           string    `json:"mac_address"`
-	OSVersion            string    `json:"os_version"`
-	Applications         []AppInfo `json:"applications"`
+	ServerID             string       `json:"server_id"`
+	ProcessorModel       string       `json:"processor_model"`
+	ProcessorCores       int          `json:"processor_cores"`
+	ProcessorClockGHz    float64      `json:"processor_clock_ghz"`
+	DiskType             string       `json:"disk_type"`
+	DiskSizeGB           float64      `json:"disk_size_gb"`
+	DiskHealthStatus     string       `json:"disk_health_status"`
+	DiskHealthPercent    *int         `json:"disk_health_percent"`
+	RAMTotalGB           float64      `json:"ram_total_gb"`
+	RAMSlotsUsed         int          `json:"ram_slots_used"`
+	RAMSlotsTotal        int          `json:"ram_slots_total"`
+	RAMDDRType           string       `json:"ram_ddr_type"`
+	BatteryHealthPercent *float64     `json:"battery_health_percent"`
+	SerialNumber         string       `json:"serial_number"`
+	IPAddress            string       `json:"ip_address"`
+	MACAddress           string       `json:"mac_address"`
+	OSVersion            string       `json:"os_version"`
+	Applications         []AppInfo    `json:"applications"`
+	DeviceUsers          []DeviceUser `json:"device_users"`
 }
 
 type AppInfo struct {
@@ -36,6 +41,14 @@ type AppInfo struct {
 	Version     string `json:"app_version"`
 	Publisher   string `json:"publisher"`
 	InstallDate string `json:"install_date"`
+}
+
+type DeviceUser struct {
+	Username   string `json:"username"`
+	FullName   string `json:"full_name"`
+	Privilege  string `json:"privilege"`
+	IsDisabled bool   `json:"is_disabled"`
+	IsLoggedIn bool   `json:"is_logged_in"`
 }
 
 type win32Processor struct {
@@ -83,6 +96,7 @@ func collectAssetInfo(serverID string, deviceType string) AssetInfo {
 	collectNetworkIdentity(&asset)
 	collectOSVersion(&asset)
 	asset.Applications = collectInstalledApplications()
+	asset.DeviceUsers = collectDeviceUsers()
 	if deviceType == "laptop" {
 		collectBatteryHealth(&asset)
 	}
@@ -100,6 +114,12 @@ func collectProcessorInfo(asset *AssetInfo) {
 	asset.ProcessorClockGHz = float64(cpus[0].MaxClockSpeed) / 1000
 }
 
+type msStorageDriverFailurePredictData struct {
+	PredictFailure bool
+	VendorSpecific []byte
+	Reason         uint32
+}
+
 func collectDiskInfo(asset *AssetInfo) {
 	var disks []win32DiskDrive
 	if err := wmi.Query("SELECT Size, MediaType FROM Win32_DiskDrive", &disks); err != nil || len(disks) == 0 {
@@ -112,16 +132,36 @@ func collectDiskInfo(asset *AssetInfo) {
 	} else {
 		asset.DiskType = "HDD"
 	}
+
 	var smart []msStorageDriverFailurePredictStatus
 	err := wmi.QueryNamespace("SELECT PredictFailure FROM MSStorageDriver_FailurePredictStatus", &smart, `root\wmi`)
 	if err != nil || len(smart) == 0 {
 		asset.DiskHealthStatus = "UNKNOWN"
-		return
-	}
-	if smart[0].PredictFailure {
-		asset.DiskHealthStatus = "WARNING"
 	} else {
-		asset.DiskHealthStatus = "OK"
+		if smart[0].PredictFailure {
+			asset.DiskHealthStatus = "WARNING"
+		} else {
+			asset.DiskHealthStatus = "OK"
+		}
+	}
+
+	var smartData []msStorageDriverFailurePredictData
+	err = wmi.QueryNamespace("SELECT PredictFailure, VendorSpecific, Reason FROM MSStorageDriver_FailurePredictData", &smartData, `root\wmi`)
+	if err == nil && len(smartData) > 0 && len(smartData[0].VendorSpecific) >= 4 {
+		vendorData := smartData[0].VendorSpecific
+		if len(vendorData) >= 512 {
+			offset := 0
+			if vendorData[0] == 0x01 {
+				offset = 2
+			}
+			if len(vendorData) > offset+10 {
+				wearLevel := int(vendorData[offset+5])
+				if wearLevel >= 0 && wearLevel <= 100 {
+					healthPercent := 100 - wearLevel
+					asset.DiskHealthPercent = &healthPercent
+				}
+			}
+		}
 	}
 }
 
@@ -238,6 +278,184 @@ func collectInstalledApplications() []AppInfo {
 		}
 	}
 	return apps
+}
+
+type win32UserAccount struct {
+	SID          string
+	Name         string
+	FullName     string
+	Disabled     bool
+	LocalAccount bool
+}
+
+type win32LoggedOnUser struct {
+	Antecedent string
+	Dependent  string
+}
+
+// ridFromSID mengambil Relative ID (angka terakhir setelah tanda '- terakhir).
+// RID >= 1000 berarti akun dibuat manual oleh manusia; RID < 1000 akun bawaan sistem Windows.
+func ridFromSID(sid string) int {
+	idx := strings.LastIndex(sid, "-")
+	if idx < 0 {
+		return -1
+	}
+	rid, err := strconv.Atoi(sid[idx+1:])
+	if err != nil {
+		return -1
+	}
+	return rid
+}
+
+func collectDeviceUsers() []DeviceUser {
+	var accounts []win32UserAccount
+	if err := wmi.Query("SELECT SID, Name, FullName, Disabled, LocalAccount FROM Win32_UserAccount WHERE LocalAccount = TRUE", &accounts); err != nil {
+		log.Printf("Gagal membaca daftar user lokal: %v", err)
+		return nil
+	}
+
+	adminNames := collectLocalGroupMembers("Administrators")
+	userNames := collectLocalGroupMembers("Users")
+	loggedIn := collectLoggedInUsers()
+
+	var users []DeviceUser
+	for _, a := range accounts {
+		name := strings.ToLower(a.Name)
+		upperName := strings.ToUpper(a.Name)
+
+		// Hanya akun aktif. "Administrator" juga ditampilkan asal di-enable manual oleh IT.
+		if a.Disabled {
+			continue
+		}
+
+		// RID >= 1000 = akun dibuat manual oleh manusia.
+		// RID < 1000 = akun bawaan sistem (Guest, DefaultAccount, WDAGUtilityAccount, dll),
+		// kecuali "Administrator" (RID 500) yang boleh muncul kalau aktif.
+		rid := ridFromSID(a.SID)
+		if rid >= 0 && rid < 1000 && name != "administrator" {
+			continue
+		}
+
+		// Buang sisa akun sistem yang tidak punya RID standar
+		if strings.HasSuffix(name, "$") ||
+			strings.Contains(name, "sandbox") ||
+			strings.Contains(name, "wdag") ||
+			name == "defaultaccount" {
+			continue
+		}
+
+		u := DeviceUser{
+			Username:   a.Name,
+			FullName:   a.FullName,
+			Privilege:  "standard_user",
+			IsDisabled: a.Disabled,
+			IsLoggedIn: loggedIn[upperName],
+		}
+		if adminNames[upperName] {
+			u.Privilege = "administrator"
+		} else if !userNames[upperName] {
+			u.Privilege = "limited"
+		}
+		users = append(users, u)
+	}
+	return users
+}
+
+// trimDomainPrefix membuang prefix "DOMAIN\" dari path WMI, misal
+// collectLocalGroupMembers mengembalikan nama anggota grup lokal (uppercase) via `net localgroup`.
+// Class asosiasi WMI (Win32GroupUser) tidak bisa di-query dengan SELECT biasa, jadi pakai tool
+// bawaan Windows yang hasilnya stabil.
+// ponytail: ganti dengan Win32 API NetUserGetLocalGroups kalau butuh performa tinggi — laporan
+// asset dikirim 1×/24 jam, `net localgroup` sudah cukup.
+func collectLocalGroupMembers(groupName string) map[string]bool {
+	members := make(map[string]bool)
+	out, err := exec.Command("net", "localgroup", groupName).Output()
+	if err != nil {
+		log.Printf("Gagal membaca anggota grup %q: %v", groupName, err)
+		return members
+	}
+	// Baris pertama = "Alias name ...", baris kedua = "----------------", sisanya anggota
+	// yang diakhiri "--" pada locale Inggris.
+	lines := strings.Split(string(out), "\n")
+	started := false
+	for _, line := range lines {
+		line = strings.TrimRight(line, "\r")
+		trimmed := strings.TrimSpace(line)
+		if !started {
+			// lewati 2 baris header
+			if strings.HasPrefix(trimmed, "Alias name") || strings.HasPrefix(trimmed, "Group name") || strings.HasPrefix(trimmed, "---") {
+				started = true
+			}
+			continue
+		}
+		if trimmed == "" || strings.HasPrefix(trimmed, "The command completed") ||
+			strings.HasPrefix(trimmed, "Perintah selesai") {
+			continue
+		}
+		// lewati garis pemisah "-----" dan baris keterangan bawaan Windows
+		if strings.HasPrefix(trimmed, "---") || strings.HasPrefix(trimmed, "===") {
+			continue
+		}
+		// baris "COMMENT ..." / "MEMBERS ..." bukan nama akun
+		if fields := strings.Fields(trimmed); len(fields) > 0 {
+			switch strings.ToUpper(fields[0]) {
+			case "COMMENT", "MEMBERS":
+				continue
+			}
+		}
+		if idx := strings.Index(trimmed, "--"); idx > 0 {
+			trimmed = strings.TrimSpace(trimmed[:idx])
+		}
+		name := strings.TrimSpace(trimDomainPrefix(trimmed))
+		if name != "" {
+			members[strings.ToUpper(name)] = true
+		}
+	}
+	return members
+}
+
+// trimDomainPrefix membuang prefix "DOMAIN\" dari path Windows, misal
+// "DESKTOP-92PUGLA\IT 10" -> "IT 10"
+func trimDomainPrefix(s string) string {
+	if idx := strings.LastIndex(s, `\`); idx >= 0 {
+		return s[idx+1:]
+	}
+	return s
+}
+
+// collectLoggedInUsers mengembalikan nama user yang punya sesi login aktif.
+// Nama user ada di sisi Antecedent (Win32_Account), sedangkan Dependent berisi LogonId.
+func collectLoggedInUsers() map[string]bool {
+	loggedIn := make(map[string]bool)
+	var sessions []win32LoggedOnUser
+	if err := wmi.Query("SELECT Antecedent, Dependent FROM Win32_LoggedOnUser", &sessions); err != nil {
+		log.Printf("Gagal membaca sesi login: %v", err)
+		return loggedIn
+	}
+	for _, s := range sessions {
+		name := extractWMIKeyValue(s.Antecedent, "Name")
+		if name == "" {
+			continue
+		}
+		loggedIn[strings.ToUpper(trimDomainPrefix(name))] = true
+	}
+	return loggedIn
+}
+
+// extractWMIKeyValue mengambil nilai dari referensi objek WMI, misal
+// `\\.\root\cimv2:Win32_Account.Domain="DESKTOP",Name="IT 10"` + key "Name" -> "IT 10"
+func extractWMIKeyValue(ref, key string) string {
+	marker := key + "=\""
+	idx := strings.Index(ref, marker)
+	if idx < 0 {
+		return ""
+	}
+	rest := ref[idx+len(marker):]
+	end := strings.Index(rest, `"`)
+	if end < 0 {
+		return ""
+	}
+	return rest[:end]
 }
 
 func mapDDRType(code uint16) string {
