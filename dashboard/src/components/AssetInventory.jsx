@@ -6,6 +6,10 @@ export default function AssetInventory() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
 
+  useEffect(() => {
+    fetchAssets();
+  }, []);
+
   const fetchAssets = async () => {
     try {
       const res = await fetch('/api/servers');
@@ -21,7 +25,7 @@ export default function AssetInventory() {
           } else {
             assetList.push({ server_id: s.server_id, ip_address: s.ip_address, device_type: s.device_type });
           }
-        } catch (e) {
+        } catch {
           assetList.push({ server_id: s.server_id, ip_address: s.ip_address });
         }
       }
@@ -32,10 +36,6 @@ export default function AssetInventory() {
       setLoading(false);
     }
   };
-
-  useEffect(() => {
-    fetchAssets();
-  }, []);
 
   const exportCSV = () => {
     const headers = ['Server ID', 'OS Version', 'IP Address', 'Processor', 'RAM (GB)', 'Disk Size (GB)', 'Disk Health %', 'Disk Health Status', 'Serial Number'];
@@ -61,12 +61,13 @@ export default function AssetInventory() {
     document.body.removeChild(link);
   };
 
-  const filteredAssets = assets.filter(a => 
+const filteredAssets = assets.filter(a => 
     (a.server_id && a.server_id.toLowerCase().includes(search.toLowerCase())) ||
     (a.ip_address && a.ip_address.includes(search)) ||
     (a.serial_number && a.serial_number.toLowerCase().includes(search.toLowerCase())) ||
-    (a.processor_model && a.processor_model.toLowerCase().includes(search.toLowerCase()))
-  );
+    (a.processor_model && a.processor_model.toLowerCase().includes(search.toLowerCase())) ||
+    (a.os_version && a.os_version.toLowerCase().includes(search.toLowerCase()))
+);
 
   const getDiskHealthClass = (percent) => {
     if (percent === null || percent === undefined) return 'bg-ink-muted/10 text-ink-muted border-ink-muted/30';

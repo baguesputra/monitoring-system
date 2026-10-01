@@ -6,6 +6,10 @@ export default function Applications() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
 
+  useEffect(() => {
+    fetchApps();
+  }, []);
+
   const fetchApps = async () => {
     try {
       const res = await fetch('/api/servers');
@@ -24,8 +28,8 @@ export default function Applications() {
               });
             }
           }
-        } catch (e) {
-          // ignore
+        } catch {
+          // ignore individual fetch errors
         }
       }
       setApps(allApps);
@@ -35,10 +39,6 @@ export default function Applications() {
       setLoading(false);
     }
   };
-
-  useEffect(() => {
-    fetchApps();
-  }, []);
 
   const filteredApps = apps.filter(app => 
     (app.app_name && app.app_name.toLowerCase().includes(search.toLowerCase())) ||

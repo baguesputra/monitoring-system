@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Server, Laptop, Cpu, MemoryStick, HardDrive, Search, RefreshCw, ArrowRight } from 'lucide-react';
+import { Server, Laptop, HardDrive, Cpu, MemoryStick, Search, RefreshCw, ArrowRight } from 'lucide-react';
 
 export default function Overview({ onSelectDevice }) {
   const [servers, setServers] = useState([]);
@@ -22,15 +22,17 @@ export default function Overview({ onSelectDevice }) {
             const sData = await sRes.json();
             statusMap[s.server_id] = sData;
           }
-        } catch (e) { /* ignore */ }
+        } catch (e) {
+          // ignore individual fetch errors
+        }
       }
       setStatuses(statusMap);
-    } catch (err) {
-      console.error('Failed to fetch servers:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
+} catch (_err) {
+        console.error('Failed to fetch servers:', _err);
+      } finally {
+        setLoading(false);
+      }
+    };
 
   useEffect(() => {
     fetchData();
@@ -43,9 +45,7 @@ export default function Overview({ onSelectDevice }) {
     const matchSearch = s.server_id.toLowerCase().includes(q) ||
       (s.hostname && s.hostname.toLowerCase().includes(q)) ||
       (s.ip_address && s.ip_address.includes(q)) ||
-      (s.owner_name && s.owner_name.toLowerCase().includes(q)) ||
-      (s.department && s.department.toLowerCase().includes(q)) ||
-      (s.location && s.location.toLowerCase().includes(q));
+      (s.owner_name && s.owner_name.toLowerCase().includes(q));
     const matchType = typeFilter === 'all' || (s.device_type && s.device_type.toLowerCase() === typeFilter);
     return matchSearch && matchType;
   });
@@ -61,7 +61,7 @@ export default function Overview({ onSelectDevice }) {
   };
 
   const getSealLabel = (st) => {
-    if (!st || !st.last_seen_at) return 'OFFLINE';
+    if (!st) return 'OFFLINE';
     const cpu = st.cpu_percent || 0;
     const ram = st.ram_percent || 0;
     const disk = st.disk_percent || 0;
@@ -77,7 +77,7 @@ export default function Overview({ onSelectDevice }) {
         <div>
           <h2 className="font-display text-2xl font-semibold text-ink m-0">Daily Ledger</h2>
           <p className="font-mono-ui text-[11px] text-ink-muted uppercase tracking-wider mt-1 m-0">
-            Estate Infrastructure Register — {new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+            Estate Infrastructure Register
           </p>
         </div>
         <button onClick={fetchData} className="flex items-center gap-2 px-4 py-2 bg-parchment-dark border border-ink-muted/40 text-ink text-[11px] font-mono-ui uppercase tracking-wider hover:bg-ink/5 transition focus-ring rounded-sm">
@@ -185,16 +185,9 @@ export default function Overview({ onSelectDevice }) {
                   <span className={`wax-seal ${sealClass} stamp`}>{sealLabel}</span>
                 </div>
 
-                <p className="font-mono-ui text-[11px] text-ink-muted mb-1">{s.hostname || 'Unknown host'}</p>
-                {(s.owner_name || s.department) && (
-                  <p className="font-mono-ui text-[10px] text-gold-dim mb-4 truncate">
-                    {s.owner_name || 'Unassigned'}{s.department ? ` — ${s.department}` : ''}
-                  </p>
-                )}
-                {!s.owner_name && !s.department && <div className="mb-4" />}
+                <p className="font-mono-ui text-[11px] text-ink-muted mb-4">{s.hostname || 'Unknown host'}</p>
 
                 <div className="space-y-3 mb-4">
-                  {/* CPU */}
                   <div>
                     <div className="flex justify-between text-[11px] mb-1 font-mono-ui">
                       <span className="text-ink-muted flex items-center gap-1.5"><Cpu className="w-3 h-3" strokeWidth={2} /> CPU</span>
@@ -210,7 +203,6 @@ export default function Overview({ onSelectDevice }) {
                     </div>
                   </div>
 
-                  {/* RAM */}
                   <div>
                     <div className="flex justify-between text-[11px] mb-1 font-mono-ui">
                       <span className="text-ink-muted flex items-center gap-1.5"><MemoryStick className="w-3 h-3" strokeWidth={2} /> RAM</span>
@@ -226,7 +218,6 @@ export default function Overview({ onSelectDevice }) {
                     </div>
                   </div>
 
-                  {/* Disk */}
                   <div>
                     <div className="flex justify-between text-[11px] mb-1 font-mono-ui">
                       <span className="text-ink-muted flex items-center gap-1.5"><HardDrive className="w-3 h-3" strokeWidth={2} /> Disk</span>
