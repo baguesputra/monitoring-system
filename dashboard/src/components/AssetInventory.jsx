@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { HardDrive, BatteryCharging, Download, Search, Server, Laptop, AlertCircle, CheckCircle } from 'lucide-react';
+import { formatDeviceModel } from '../utils/formatters';
 
 export default function AssetInventory() {
   const [assets, setAssets] = useState([]);
@@ -21,12 +22,17 @@ export default function AssetInventory() {
           const aRes = await fetch(`/api/servers/${s.server_id}/asset-info`);
           if (aRes.ok) {
             const aData = await aRes.json();
-            assetList.push(aData);
+            assetList.push({
+              ...aData,
+              device_type: s.device_type,
+              owner_name: s.owner_name,
+              department: s.department,
+            });
           } else {
-            assetList.push({ server_id: s.server_id, ip_address: s.ip_address, device_type: s.device_type });
+            assetList.push({ server_id: s.server_id, ip_address: s.ip_address, device_type: s.device_type, owner_name: s.owner_name, department: s.department });
           }
         } catch {
-          assetList.push({ server_id: s.server_id, ip_address: s.ip_address });
+          assetList.push({ server_id: s.server_id, ip_address: s.ip_address, device_type: s.device_type });
         }
       }
       setAssets(assetList);
@@ -38,16 +44,25 @@ export default function AssetInventory() {
   };
 
   const exportCSV = () => {
-    const headers = ['Server ID', 'OS Version', 'IP Address', 'Processor', 'RAM (GB)', 'Disk Size (GB)', 'Disk Health %', 'Disk Health Status', 'Serial Number'];
+    const headers = ['Server ID', 'Device Type', 'Model', 'BIOS Date', 'Owner', 'Department', 'OS Version', 'IP Address', 'Processor', 'GPU', 'RAM (GB)', 'RAM Spec', 'Disk Type', 'Disk Size (GB)', 'Disk Health %', 'Disk Health Status', 'Battery %', 'Serial Number'];
     const rows = assets.map(a => [
       a.server_id,
+      a.device_type || '',
+      `"${formatDeviceModel(a.device_manufacturer, a.device_model)}"`,
+      a.bios_release_date || '',
+      `"${a.owner_name || ''}"`,
+      `"${a.department || ''}"`,
       `"${a.os_version || ''}"`,
       a.ip_address || '',
       `"${a.processor_model || ''} (${a.processor_cores || 0} Cores)"`,
+      `"${a.gpu_model || ''}"`,
       a.ram_total_gb || 0,
+      `"${a.ram_ddr_type || ''} ${a.ram_speed_mhz ? a.ram_speed_mhz + 'MHz' : ''} ${a.ram_form_factor || ''} (${a.ram_slots_used || 0}/${a.ram_slots_total || 0})"`,
+      a.disk_type || '',
       a.disk_size_gb || 0,
       a.disk_health_percent !== null && a.disk_health_percent !== undefined ? a.disk_health_percent : 'N/A',
       a.disk_health_status || 'UNKNOWN',
+      a.battery_health_percent !== null && a.battery_health_percent !== undefined ? Math.round(a.battery_health_percent) : 'N/A',
       a.serial_number || ''
     ]);
 
@@ -65,6 +80,9 @@ const filteredAssets = assets.filter(a =>
     (a.server_id && a.server_id.toLowerCase().includes(search.toLowerCase())) ||
     (a.ip_address && a.ip_address.includes(search)) ||
     (a.serial_number && a.serial_number.toLowerCase().includes(search.toLowerCase())) ||
+    (a.device_model && a.device_model.toLowerCase().includes(search.toLowerCase())) ||
+    (a.device_manufacturer && a.device_manufacturer.toLowerCase().includes(search.toLowerCase())) ||
+    (a.owner_name && a.owner_name.toLowerCase().includes(search.toLowerCase())) ||
     (a.processor_model && a.processor_model.toLowerCase().includes(search.toLowerCase())) ||
     (a.os_version && a.os_version.toLowerCase().includes(search.toLowerCase()))
 );
@@ -168,7 +186,11 @@ const filteredAssets = assets.filter(a =>
                           <div className="font-display text-base font-semibold">{a.server_id}</div>
                           <div className="text-[10px] text-ink-muted uppercase tracking-wider">
                             {a.device_type?.charAt(0).toUpperCase() + a.device_type?.slice(1) || 'Server'}
+                            {a.owner_name ? ` · ${a.owner_name}` : ''}
                           </div>
+                          {formatDeviceModel(a.device_manufacturer, a.device_model) && (
+                            <div className="text-[10px] text-ink mt-0.5">{formatDeviceModel(a.device_manufacturer, a.device_model)}</div>
+                          )}
                         </div>
                       </div>
                     </td>
@@ -178,12 +200,16 @@ const filteredAssets = assets.filter(a =>
                         {a.processor_cores || 0} Cores @ {a.processor_clock_ghz ? a.processor_clock_ghz.toFixed(1) : '?'} GHz
                       </div>
                       <div className="text-[10px] text-ink-muted mt-0.5">
-                        {a.ram_total_gb || 0} GB ({a.ram_ddr_type || 'DDR'}) &middot; {a.ram_slots_used || 0}/{a.ram_slots_total || 0} slots
+                        {a.ram_total_gb || 0} GB ({a.ram_ddr_type || 'DDR'}{a.ram_speed_mhz > 0 ? ` ${a.ram_speed_mhz}MHz` : ''}{a.ram_form_factor ? ` ${a.ram_form_factor}` : ''}) &middot; {a.ram_slots_used || 0}/{a.ram_slots_total || 0} slots
+                        {a.ram_max_gb > 0 ? ` · max ${a.ram_max_gb.toFixed(0)}GB` : ''}
                       </div>
+                      {a.gpu_model && (
+                        <div className="text-[10px] text-ink-muted mt-0.5 truncate max-w-xs" title={a.gpu_model}>GPU: {a.gpu_model}</div>
+                      )}
                     </td>
                     <td className="p-4">
                       <div className="text-[11px] text-ink-muted mb-1">
-                        {a.disk_type || 'Disk'} ({a.disk_size_gb || 0} GB)
+                        {a.disk_type || 'Disk'} ({a.disk_size_gb ? a.disk_size_gb.toFixed(0) : 0} GB)
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
                         <span className={`inline-flex items-center px-2 py-1 rounded-sm font-mono-ui text-[10px] uppercase tracking-wider ${getDiskHealthClass(a.disk_health_percent)}`}>
@@ -191,6 +217,11 @@ const filteredAssets = assets.filter(a =>
                         </span>
                         {getSmartBadge(a.disk_health_status)}
                       </div>
+                      {a.disk_volumes?.length > 0 && (
+                        <div className="text-[10px] text-ink-muted mt-1">
+                          {a.disk_volumes.map(v => `${v.drive} ${v.used_percent.toFixed(0)}%/${v.total_gb.toFixed(0)}G`).join(' · ')}
+                        </div>
+                      )}
                     </td>
                     <td className="p-4">
                       {a.battery_health_percent !== null && a.battery_health_percent !== undefined ? (
@@ -207,6 +238,9 @@ const filteredAssets = assets.filter(a =>
                     <td className="p-4">
                       <div className="font-mono-ui text-sm text-ink font-medium">{a.serial_number || '—'}</div>
                       <div className="text-[10px] text-ink-muted mt-0.5 truncate max-w-xs">{a.os_version || 'Windows'}</div>
+                      {a.bios_release_date && (
+                        <div className="text-[10px] text-ink-muted mt-0.5">BIOS: {a.bios_release_date}</div>
+                      )}
                     </td>
                     <td className="p-4">
                       <div className="font-mono-ui text-[11px] text-gold-dim">{a.ip_address || '—'}</div>

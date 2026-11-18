@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Cpu, Activity, Server, CheckCircle, XCircle, RefreshCw, Save, X, UserCog, KeyRound, UserX, Pencil, Crown } from 'lucide-react';
+import { ArrowLeft, Cpu, Activity, Server, CheckCircle, XCircle, RefreshCw, Save, X, UserCog, KeyRound, UserX, Pencil, Crown, HardDrive, ShieldCheck, Terminal } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from 'recharts';
+import { formatDeviceModel } from '../utils/formatters';
+import { deviceStatus, metricTone } from '../utils/deviceStatus';
 
 const CHART_COLORS = {
   cpu: '#4A5D4E',
@@ -27,28 +29,23 @@ const PRIVILEGE_META = {
   },
 };
 
-function getSeal(cpu, ram, disk, online) {
-  if (!online) return { cls: 'wax-seal-offline', label: 'OFFLINE' };
-  if (cpu >= 90 || ram >= 95 || disk >= 95) return { cls: 'wax-seal-critical', label: 'CRITICAL' };
-  if (cpu >= 75 || ram >= 85 || disk >= 85) return { cls: 'wax-seal-warning', label: 'ATTENTION' };
-  return { cls: 'wax-seal-normal', label: 'NOMINAL' };
-}
-
-function MetricBar({ label, value, threshold }) {
-  const critical = value >= 90;
-  const warning = value >= threshold;
+function MetricBar({ label, value }) {
+  const tone = metricTone(label.toLowerCase(), value);
+  const critical = tone === 'critical';
+  const warning = tone === 'warning';
+  const known = tone !== 'unknown';
   return (
     <div>
       <div className="flex justify-between text-[11px] mb-1 font-mono-ui">
         <span className="text-ink-muted">{label}</span>
         <span className={critical ? 'text-cardinal font-bold' : warning ? 'text-gold-dim font-bold' : 'text-ink'}>
-          {value.toFixed(1)}%
+            {known ? `${value.toFixed(1)}%` : '—'}
         </span>
       </div>
       <div className="w-full bg-parchment-dark h-1.5 rounded-sm overflow-hidden border border-ink-muted/20">
         <div
           className={`h-full rounded-sm transition-all duration-500 ${critical ? 'bg-cardinal' : warning ? 'bg-gold-dim' : 'bg-moss'}`}
-          style={{ width: `${Math.min(value, 100)}%` }}
+          style={{ width: `${known ? Math.max(0, Math.min(value, 100)) : 0}%` }}
         />
       </div>
     </div>
@@ -78,6 +75,8 @@ const CustomTooltip = ({ active, payload, label }) => {
 export default function DeviceDetail({ serverId, onBack, onRenamed }) {
   const [metrics, setMetrics] = useState([]);
   const [status, setStatus] = useState(null);
+  const [statusFailed, setStatusFailed] = useState(false);
+  const [statusTime, setStatusTime] = useState(() => Date.now());
   const [asset, setAsset] = useState(null);
   const [users, setUsers] = useState([]);
   const [meta, setMeta] = useState(null);
@@ -90,6 +89,7 @@ export default function DeviceDetail({ serverId, onBack, onRenamed }) {
   const [renaming, setRenaming] = useState(false);
   const [renameDraft, setRenameDraft] = useState('');
   const [renameMsg, setRenameMsg] = useState(null);
+  const [procSearch, setProcSearch] = useState('');
 
   const fetchDetail = async () => {
     try {
@@ -103,14 +103,18 @@ export default function DeviceDetail({ serverId, onBack, onRenamed }) {
 
       if (mRes?.ok) {
         const mData = await mRes.json();
-        setMetrics((mData || []).reverse().map(item => ({
+        const isMultiDay = range.endsWith('d');
+        setMetrics((mData || []).map(item => ({
           ...item,
-          time: new Date(item.recorded_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          time: isMultiDay
+            ? new Date(item.recorded_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+            : new Date(item.recorded_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           network_sent_kb: (item.network_sent_bps / 1024).toFixed(1),
           network_recv_kb: (item.network_recv_bps / 1024).toFixed(1),
         })));
       }
 
+      setStatusFailed(!sRes?.ok);
       if (sRes?.ok) setStatus(await sRes.json());
       if (aRes?.ok) setAsset(await aRes.json());
       if (uRes?.ok) setUsers(await uRes.json());
@@ -130,8 +134,10 @@ export default function DeviceDetail({ serverId, onBack, onRenamed }) {
         }
       }
     } catch (err) {
+      setStatusFailed(true);
       console.error('Failed to fetch holding detail:', err);
     } finally {
+      setStatusTime(Date.now());
       setLoading(false);
     }
   };
@@ -194,10 +200,10 @@ export default function DeviceDetail({ serverId, onBack, onRenamed }) {
     }
   };
 
-  const cpu = status?.cpu_percent || 0;
-  const ram = status?.ram_percent || 0;
-  const disk = status?.disk_percent || 0;
-  const seal = getSeal(cpu, ram, disk, !!status);
+  const cpu = status?.cpu_percent;
+  const ram = status?.ram_percent;
+  const disk = status?.disk_percent;
+  const seal = deviceStatus(status, statusTime, statusFailed);
   const admins = users.filter(u => u.privilege === 'administrator').length;
 
   return (
@@ -209,7 +215,7 @@ export default function DeviceDetail({ serverId, onBack, onRenamed }) {
           className="flex items-center gap-2 px-4 py-2 bg-parchment-dark border border-ink-muted/40 text-ink text-[11px] font-mono-ui uppercase tracking-wider hover:bg-ink/5 transition focus-ring rounded-sm self-start"
         >
           <ArrowLeft className="w-4 h-4" strokeWidth={2} />
-          Return to Ledger
+          Kembali ke daftar
         </button>
 
         <div className="flex flex-1 flex-col md:flex-row md:items-center justify-between gap-4 md:pl-4">
@@ -220,15 +226,15 @@ export default function DeviceDetail({ serverId, onBack, onRenamed }) {
             <div>
               <h2 className="font-display text-2xl font-semibold text-ink m-0">{serverId}</h2>
               <p className="font-mono-ui text-[11px] text-ink-muted m-0">
-                {asset?.os_version || 'Windows Estate Node'} · IP: {status?.ip_address || asset?.ip_address || '—'}
+                {formatDeviceModel(asset?.device_manufacturer, asset?.device_model) || asset?.os_version || 'Windows Estate Node'} · IP: {status?.ip_address || asset?.ip_address || '—'}
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-3">
-            <span className={`wax-seal ${seal.cls} stamp`}>{seal.label}</span>
+            <span className="status-badge" data-tone={seal.tone} title={seal.reason}>{seal.label}</span>
             <div className="flex flex-wrap items-center gap-1.5 bg-parchment-dark border border-ink-muted/30 p-1">
-              {['30m', '1h', '6h', '24h'].map(r => (
+              {['30m', '1h', '6h', '24h', '7d', '30d'].map(r => (
                 <button
                   key={r}
                   onClick={() => setRange(r)}
@@ -447,21 +453,21 @@ export default function DeviceDetail({ serverId, onBack, onRenamed }) {
                 <Cpu className="w-4 h-4 text-moss" strokeWidth={1.5} />
                 <p className="font-mono-ui text-[10px] text-ink-muted uppercase tracking-wider m-0">Processor Load</p>
               </div>
-              <MetricBar label="CPU" value={cpu} threshold={75} />
+              <MetricBar label="CPU" value={cpu} />
             </div>
             <div className="ledger-card p-5">
               <div className="flex items-center gap-2 mb-3">
                 <Cpu className="w-4 h-4 text-blue-600" strokeWidth={1.5} />
                 <p className="font-mono-ui text-[10px] text-ink-muted uppercase tracking-wider m-0">Memory</p>
               </div>
-              <MetricBar label="RAM" value={ram} threshold={85} />
+              <MetricBar label="RAM" value={ram} />
             </div>
             <div className="ledger-card p-5">
               <div className="flex items-center gap-2 mb-3">
                 <Activity className="w-4 h-4 text-emerald-600" strokeWidth={1.5} />
                 <p className="font-mono-ui text-[10px] text-ink-muted uppercase tracking-wider m-0">Storage</p>
               </div>
-              <MetricBar label="Disk" value={disk} threshold={85} />
+              <MetricBar label="Disk" value={disk} />
             </div>
           </section>
 
@@ -507,6 +513,145 @@ export default function DeviceDetail({ serverId, onBack, onRenamed }) {
               </div>
             </div>
           </section>
+
+          {/* Hardware Upgrade Specs & Disk Volumes */}
+          {asset && (
+            <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="ledger-card-elevated p-6 space-y-4">
+                <h3 className="font-display text-lg font-semibold text-ink flex items-center gap-2 m-0 pb-3 border-b border-ink-muted/20">
+                  <HardDrive className="w-5 h-5 text-gold-dim" strokeWidth={1.5} />
+                  Hardware Upgrade Specs &amp; Volumes
+                </h3>
+                <div className="grid grid-cols-2 gap-4 font-mono-ui text-[11px]">
+                  <div>
+                    <p className="text-[10px] text-ink-muted uppercase m-0">Model &amp; BIOS</p>
+                    <p className="text-ink font-medium mt-0.5 m-0">{formatDeviceModel(asset.device_manufacturer, asset.device_model) || '—'}</p>
+                    <p className="text-[10px] text-ink-muted m-0">BIOS: {asset.bios_release_date || '—'} · S/N: {asset.serial_number || '—'}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-ink-muted uppercase m-0">Processor &amp; GPU</p>
+                    <p className="text-ink font-medium mt-0.5 m-0">{asset.processor_model || '—'}</p>
+                    <p className="text-[10px] text-ink-muted m-0">GPU: {asset.gpu_model || '—'}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-ink-muted uppercase m-0">Memory Upgrade Info</p>
+                    <p className="text-ink font-medium mt-0.5 m-0">
+                      {asset.ram_total_gb?.toFixed(0) || 0} GB {asset.ram_ddr_type || ''} {asset.ram_speed_mhz > 0 ? `@ ${asset.ram_speed_mhz} MHz` : ''}
+                    </p>
+                    <p className="text-[10px] text-ink-muted m-0">
+                      {asset.ram_slots_used}/{asset.ram_slots_total || '?'} slots {asset.ram_form_factor || ''} {asset.ram_max_gb > 0 ? `(Maks ${asset.ram_max_gb.toFixed(0)} GB)` : ''}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-ink-muted uppercase m-0">Primary Disk</p>
+                    <p className="text-ink font-medium mt-0.5 m-0">{asset.disk_type || '—'} · {asset.disk_size_gb?.toFixed(0) || 0} GB</p>
+                    <p className="text-[10px] text-ink-muted m-0">
+                      SMART: {asset.disk_health_status || 'UNKNOWN'}
+                      {asset.disk_health_percent !== null && asset.disk_health_percent !== undefined ? ` (${asset.disk_health_percent}%)` : ''}
+                    </p>
+                  </div>
+                </div>
+
+                {asset.disk_volumes?.length > 0 && (
+                  <div className="pt-3 border-t border-ink-muted/20 space-y-2.5">
+                    <p className="font-mono-ui text-[10px] text-ink-muted uppercase tracking-wider m-0">Logical Volumes</p>
+                    {asset.disk_volumes.map((v) => (
+                      <div key={v.drive}>
+                        <div className="flex justify-between font-mono-ui text-[11px] mb-1">
+                          <span className="text-ink font-medium">{v.drive} ({v.file_system || 'NTFS'})</span>
+                          <span className="text-ink-muted">{v.used_gb.toFixed(1)} / {v.total_gb.toFixed(1)} GB ({v.used_percent.toFixed(1)}%)</span>
+                        </div>
+                        <div className="w-full bg-parchment-dark h-1.5 rounded-sm overflow-hidden border border-ink-muted/20">
+                          <div
+                            className={`h-full rounded-sm ${v.used_percent >= 90 ? 'bg-cardinal' : v.used_percent >= 80 ? 'bg-gold-dim' : 'bg-moss'}`}
+                            style={{ width: `${Math.min(v.used_percent, 100)}%` }}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="ledger-card-elevated p-6 space-y-4">
+                <h3 className="font-display text-lg font-semibold text-ink flex items-center gap-2 m-0 pb-3 border-b border-ink-muted/20">
+                  <ShieldCheck className="w-5 h-5 text-moss" strokeWidth={1.5} />
+                  Licensing &amp; Endpoint Security
+                </h3>
+
+                <div className="p-3 bg-parchment-dark border border-ink-muted/20 font-mono-ui text-[11px] space-y-1">
+                  <p className="text-[10px] text-ink-muted uppercase m-0">Security Posture</p>
+                  {asset.security_status?.reported ? (
+                    <>
+                      <p className="m-0 text-ink">
+                        Antivirus: <span className="font-semibold">{(asset.security_status.antivirus_names || []).join(', ') || 'None'}</span>{' '}
+                        ({asset.security_status.antivirus_enabled ? 'Enabled' : 'Disabled'} / Realtime {asset.security_status.realtime_protection ? 'ON' : 'OFF'})
+                      </p>
+                      <p className="m-0 text-ink">
+                        Windows Firewall: <span className={asset.security_status.firewall_enabled ? 'text-moss font-semibold' : 'text-cardinal font-semibold'}>
+                          {asset.security_status.firewall_enabled ? 'Enabled' : 'Disabled'}
+                        </span>
+                      </p>
+                    </>
+                  ) : (
+                    <p className="m-0 text-ink-muted">Menunggu laporan agent terbaru</p>
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  <p className="font-mono-ui text-[10px] text-ink-muted uppercase tracking-wider m-0">OS &amp; Office Activation</p>
+                  {asset.licenses?.length > 0 ? (
+                    asset.licenses.map((lic, idx) => {
+                      const suspect = (lic.channel || '').toUpperCase().includes('KMS') || lic.license_status !== 'Licensed';
+                      return (
+                        <div key={idx} className={`p-2.5 border rounded-sm font-mono-ui text-[11px] ${suspect ? 'bg-gold-leaf/15 border-gold-leaf/40' : 'bg-parchment-dark border-ink-muted/20'}`}>
+                          <div className="flex justify-between gap-2">
+                            <span className="font-semibold text-ink truncate" title={lic.product_name}>{lic.product_name}</span>
+                            <span className={lic.license_status === 'Licensed' ? 'text-moss font-semibold' : 'text-cardinal font-semibold'}>
+                              {lic.license_status}
+                            </span>
+                          </div>
+                          <p className="text-[10px] text-ink-muted m-0 mt-0.5">
+                            Channel: {lic.channel || 'Unknown'} {lic.partial_key ? `· Key: ...-${lic.partial_key}` : ''} {lic.kms_machine ? `· KMS: ${lic.kms_machine}` : ''}
+                          </p>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <p className="font-mono-ui text-[11px] text-ink-muted m-0">Belum ada data lisensi</p>
+                  )}
+                </div>
+              </div>
+            </section>
+          )}
+
+          {/* Observed Running Processes */}
+          {asset?.running_processes?.length > 0 && (
+            <section className="ledger-card-elevated p-6 space-y-4">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-3 border-b border-ink-muted/20">
+                <h3 className="font-display text-lg font-semibold text-ink flex items-center gap-2 m-0">
+                  <Terminal className="w-5 h-5 text-gold-dim" strokeWidth={1.5} />
+                  Observed Running Processes ({asset.running_processes.length})
+                </h3>
+                <input
+                  type="text"
+                  placeholder="Cari proses .exe (mis. kmspico, torrent)..."
+                  value={procSearch}
+                  onChange={(e) => setProcSearch(e.target.value)}
+                  className="bg-parchment border border-ink-muted/40 px-3 py-1.5 text-xs font-mono-ui text-ink rounded-sm md:w-72"
+                />
+              </div>
+              <div className="flex flex-wrap gap-1.5 max-h-48 overflow-y-auto">
+                {asset.running_processes
+                  .filter((p) => !procSearch.trim() || p.toLowerCase().includes(procSearch.toLowerCase()))
+                  .map((p) => (
+                    <span key={p} className="px-2 py-1 bg-parchment-dark border border-ink-muted/25 font-mono-ui text-[10px] text-ink rounded-sm">
+                      {p}
+                    </span>
+                  ))}
+              </div>
+            </section>
+          )}
 
           {/* User Accounts & Privileges */}
           <section className="ledger-card-elevated p-6">
