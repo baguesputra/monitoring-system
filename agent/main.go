@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"sort"
+	"strings"
 	"time"
 )
 
@@ -27,30 +29,54 @@ const (
 func main() {
 	log.Println("Monitoring agent starting...")
 	cfg := loadConfig("config.yaml")
-	log.Printf("Config loaded - Server ID: %s (%s), Collector: %s, Interval: %ds",
-		cfg.ServerID, cfg.DeviceType, cfg.CollectorURL, cfg.IntervalSeconds)
+	log.Printf("Config loaded - Server ID: %s (%s), Collector: %s, Interval: %ds, AssetInterval: %dh",
+		cfg.ServerID, cfg.DeviceType, cfg.CollectorURL, cfg.IntervalSeconds, cfg.AssetIntervalHours)
 
+	tracker := newProcessTracker()
 	asset := collectAssetInfo(cfg.ServerID, cfg.DeviceType)
 	sendAssetInfo(cfg.CollectorURL+assetInfoPath, asset)
 
 	metricsTicker := time.NewTicker(time.Duration(cfg.IntervalSeconds) * time.Second)
 	defer metricsTicker.Stop()
-	assetTicker := time.NewTicker(24 * time.Hour)
+	assetTicker := time.NewTicker(time.Duration(cfg.AssetIntervalHours) * time.Hour)
 	defer assetTicker.Stop()
 
 	for {
 		select {
 		case <-metricsTicker.C:
-			payload := collectMetrics(cfg)
+			payload := collectMetrics(cfg, tracker)
 			sendMetrics(cfg.CollectorURL+metricsPath, payload)
 		case <-assetTicker.C:
 			asset := collectAssetInfo(cfg.ServerID, cfg.DeviceType)
+			asset.RunningProcesses = mergeUniqueProcesses(asset.RunningProcesses, tracker.DrainSorted())
 			sendAssetInfo(cfg.CollectorURL+assetInfoPath, asset)
 		}
 	}
 }
 
-func collectMetrics(cfg Config) MetricsPayload {
+func mergeUniqueProcesses(a, b []string) []string {
+	seen := make(map[string]string, len(a)+len(b))
+	for _, list := range [][]string{a, b} {
+		for _, p := range list {
+			trimmed := strings.TrimSpace(p)
+			if trimmed == "" {
+				continue
+			}
+			key := strings.ToLower(trimmed)
+			if _, ok := seen[key]; !ok {
+				seen[key] = trimmed
+			}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for _, v := range seen {
+		out = append(out, v)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func collectMetrics(cfg Config, tracker *processTracker) MetricsPayload {
 	sentBps, recvBps := getNetworkUsage()
 	return MetricsPayload{
 		ServerID:       cfg.ServerID,
@@ -59,7 +85,7 @@ func collectMetrics(cfg Config) MetricsPayload {
 		Disk:           getDisk(),
 		NetworkSentBps: sentBps,
 		NetworkRecvBps: recvBps,
-		ServiceStatus:  checkServices(cfg.ServicesToCheck),
+		ServiceStatus:  checkServicesAndTrack(cfg.ServicesToCheck, tracker),
 		Timestamp:      time.Now(),
 	}
 }

@@ -2,6 +2,9 @@ package main
 
 import (
 	"log"
+	"sort"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/shirou/gopsutil/v3/cpu"
@@ -10,6 +13,49 @@ import (
 	psnet "github.com/shirou/gopsutil/v3/net"
 	"github.com/shirou/gopsutil/v3/process"
 )
+
+type processTracker struct {
+	mu   sync.Mutex
+	seen map[string]string // lowercase -> display name
+}
+
+func newProcessTracker() *processTracker {
+	return &processTracker{seen: make(map[string]string)}
+}
+
+func (pt *processTracker) Record(name string) {
+	if pt == nil {
+		return
+	}
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return
+	}
+	key := strings.ToLower(trimmed)
+	pt.mu.Lock()
+	defer pt.mu.Unlock()
+	if len(pt.seen) >= 500 {
+		return
+	}
+	if _, exists := pt.seen[key]; !exists {
+		pt.seen[key] = trimmed
+	}
+}
+
+func (pt *processTracker) DrainSorted() []string {
+	if pt == nil {
+		return nil
+	}
+	pt.mu.Lock()
+	out := make([]string, 0, len(pt.seen))
+	for _, name := range pt.seen {
+		out = append(out, name)
+	}
+	pt.seen = make(map[string]string)
+	pt.mu.Unlock()
+	sort.Strings(out)
+	return out
+}
 
 func getCPU() float64 {
 	percentages, err := cpu.Percent(1*time.Second, false)
@@ -68,6 +114,10 @@ func getNetworkUsage() (bytesSentPerSec, bytesRecvPerSec float64) {
 // checkServices mengecek apakah proses dengan nama tertentu sedang berjalan.
 // Return map[nama_service]status (true = running, false = not running)
 func checkServices(serviceNames []string) map[string]bool {
+	return checkServicesAndTrack(serviceNames, nil)
+}
+
+func checkServicesAndTrack(serviceNames []string, tracker *processTracker) map[string]bool {
 	result := make(map[string]bool)
 	for _, name := range serviceNames {
 		result[name] = false // default: dianggap tidak jalan
@@ -84,8 +134,9 @@ func checkServices(serviceNames []string) map[string]bool {
 		if err != nil {
 			continue
 		}
+		tracker.Record(name)
 		for _, target := range serviceNames {
-			if name == target || name == target+".exe" {
+			if strings.EqualFold(name, target) || strings.EqualFold(name, target+".exe") {
 				result[target] = true
 			}
 		}

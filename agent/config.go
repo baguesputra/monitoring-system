@@ -21,11 +21,12 @@ var (
 )
 
 type Config struct {
-	ServerID        string   `yaml:"server_id"`
-	DeviceType      string   `yaml:"device_type"`
-	CollectorURL    string   `yaml:"collector_url"`
-	IntervalSeconds int      `yaml:"interval_seconds"`
-	ServicesToCheck []string `yaml:"services_to_check"`
+	ServerID           string   `yaml:"server_id"`
+	DeviceType         string   `yaml:"device_type"`
+	CollectorURL       string   `yaml:"collector_url"`
+	IntervalSeconds    int      `yaml:"interval_seconds"`
+	AssetIntervalHours int      `yaml:"asset_interval_hours"`
+	ServicesToCheck    []string `yaml:"services_to_check"`
 }
 
 // loadConfig membaca dan parse file config.yaml
@@ -89,6 +90,9 @@ func loadConfig(path string) Config {
 	}
 	if cfg.IntervalSeconds <= 0 {
 		cfg.IntervalSeconds = 15
+	}
+	if cfg.AssetIntervalHours <= 0 {
+		cfg.AssetIntervalHours = 6
 	}
 	if len(cfg.ServicesToCheck) == 0 {
 		cfg.ServicesToCheck = []string{"nginx", "postgres"}
