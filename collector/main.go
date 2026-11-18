@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -54,10 +55,15 @@ func main() {
 	mux.HandleFunc("GET /api/servers/{id}/users", handleGetDeviceUsers)
 	mux.HandleFunc("PUT /api/servers/{id}/metadata", handleUpdateServerMetadata)
 	mux.HandleFunc("PUT /api/servers/{id}/rename", handleRenameServer)
+	mux.HandleFunc("GET /api/upgrade-insights", handleGetUpgradeInsights)
+	mux.HandleFunc("GET /api/policies", handleGetPolicies)
+	mux.HandleFunc("POST /api/policies", handleCreatePolicy)
+	mux.HandleFunc("DELETE /api/policies/{id}", handleDeletePolicy)
+	mux.HandleFunc("GET /api/policy-audit", handleGetPolicyAudit)
 
 	port := os.Getenv("COLLECTOR_PORT")
 	if port == "" {
-		port = "8081"
+		port = "8881"
 	}
 
 	log.Printf("Collector API starting on :%s...", port)
@@ -76,6 +82,23 @@ func handleMetrics(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
 		log.Printf("Gagal parse payload: %v", err)
+		return
+	}
+
+	if payload.ServerID == "" {
+		http.Error(w, "server_id tidak boleh kosong", http.StatusBadRequest)
+		return
+	}
+
+	// Validasi: server_id harus sudah terdaftar di tabel servers
+	exists, err := serverIDExists(payload.ServerID)
+	if err != nil {
+		http.Error(w, "Gagal memeriksa keberadaan server_id", http.StatusInternalServerError)
+		log.Printf("Gagal query serverIDExists: %v", err)
+		return
+	}
+	if !exists {
+		http.Error(w, fmt.Sprintf("server_id '%s' tidak terdaftar. Jalankan instalasi agent dulu.", payload.ServerID), http.StatusNotFound)
 		return
 	}
 
