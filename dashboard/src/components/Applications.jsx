@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Package, Search, Server } from 'lucide-react';
+import { Package, Search, Server, ShieldAlert } from 'lucide-react';
 
 export default function Applications() {
   const [apps, setApps] = useState([]);
+  const [forbiddenPatterns, setForbiddenPatterns] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [filter, setFilter] = useState('all'); // all | forbidden | user
 
   useEffect(() => {
     fetchApps();
@@ -12,9 +14,16 @@ export default function Applications() {
 
   const fetchApps = async () => {
     try {
-      const res = await fetch('/api/servers');
-      const servers = await res.json();
-      
+      const [srvRes, polRes] = await Promise.all([
+        fetch('/api/servers'),
+        fetch('/api/policies').catch(() => null),
+      ]);
+      const servers = await srvRes.json();
+      if (polRes?.ok) {
+        const policies = await polRes.json();
+        setForbiddenPatterns((policies || []).filter((p) => p.policy_type === 'forbidden').map((p) => p.pattern.toLowerCase()));
+      }
+
       const allApps = [];
       for (const s of (servers || [])) {
         try {
@@ -40,11 +49,21 @@ export default function Applications() {
     }
   };
 
-  const filteredApps = apps.filter(app => 
-    (app.app_name && app.app_name.toLowerCase().includes(search.toLowerCase())) ||
-    (app.publisher && app.publisher.toLowerCase().includes(search.toLowerCase())) ||
-    (app.server_id && app.server_id.toLowerCase().includes(search.toLowerCase()))
-  );
+  const isForbidden = (appName) => {
+    const lower = (appName || '').toLowerCase();
+    return forbiddenPatterns.some((pat) => pat && lower.includes(pat));
+  };
+
+  const filteredApps = apps.filter(app => {
+    const matchSearch =
+      (app.app_name && app.app_name.toLowerCase().includes(search.toLowerCase())) ||
+      (app.publisher && app.publisher.toLowerCase().includes(search.toLowerCase())) ||
+      (app.server_id && app.server_id.toLowerCase().includes(search.toLowerCase()));
+    if (!matchSearch) return false;
+    if (filter === 'forbidden') return isForbidden(app.app_name);
+    if (filter === 'user') return app.install_scope === 'user';
+    return true;
+  });
 
   return (
     <div className="space-y-8">
@@ -58,8 +77,8 @@ export default function Applications() {
         </div>
       </div>
 
-      {/* Search Bar */}
-      <div className="bg-parchment-dark border border-ink-muted/30 p-4">
+      {/* Search & Filter Bar */}
+      <div className="flex flex-col md:flex-row gap-4 items-start justify-between bg-parchment-dark border border-ink-muted/30 p-4">
         <div className="relative w-full md:w-96">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-ink-muted" strokeWidth={2} />
           <input 
@@ -69,6 +88,23 @@ export default function Applications() {
             onChange={(e) => setSearch(e.target.value)}
             className="w-full bg-parchment border border-ink-muted/40 pl-10 pr-4 py-2.5 text-sm text-ink focus:outline-none focus:border-gold transition focus-ring rounded-sm"
           />
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {[
+            { id: 'all', label: 'All Provisions' },
+            { id: 'forbidden', label: 'Policy Violations' },
+            { id: 'user', label: 'User-Scope Installs' },
+          ].map((f) => (
+            <button
+              key={f.id}
+              onClick={() => setFilter(f.id)}
+              className={`px-3 py-1.5 text-[10px] font-mono-ui uppercase tracking-wider transition rounded-sm ${
+                filter === f.id ? 'bg-ink text-parchment' : 'text-ink-muted bg-parchment border border-ink-muted/30 hover:text-ink'
+              }`}
+            >
+              {f.label}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -89,26 +125,48 @@ export default function Applications() {
                 <tr className="bg-ink/5 border-b border-ink-muted/30 text-ink-muted uppercase tracking-wider">
                   <th className="p-4 text-left font-medium">Holding</th>
                   <th className="p-4 text-left font-medium">Provision</th>
+                  <th className="p-4 text-left font-medium">Scope</th>
                   <th className="p-4 text-left font-medium">Version</th>
                   <th className="p-4 text-left font-medium">Purveyor</th>
                   <th className="p-4 text-left font-medium">Acquired</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-ink-muted/20 text-ink">
-                {filteredApps.map((app, idx) => (
-                  <tr key={idx} className="hover:bg-ink/3 transition">
-                    <td className="p-4">
-                      <div className="flex items-center gap-2">
-                        <Server className="w-3.5 h-3.5 text-gold-dim" strokeWidth={1.5} />
-                        <span className="font-mono-ui text-sm text-ink font-medium">{app.server_id}</span>
-                      </div>
-                    </td>
-                    <td className="p-4 font-medium text-ink">{app.app_name}</td>
-                    <td className="p-4 text-[11px] text-ink-muted">{app.app_version || '—'}</td>
-                    <td className="p-4 text-[11px] text-ink-muted max-w-xs truncate">{app.publisher || 'Unknown'}</td>
-                    <td className="p-4 text-[11px] text-ink-muted">{app.install_date || '—'}</td>
-                  </tr>
-                ))}
+                {filteredApps.map((app, idx) => {
+                  const forbidden = isForbidden(app.app_name);
+                  return (
+                    <tr key={idx} className={`hover:bg-ink/3 transition ${forbidden ? 'bg-cardinal/5' : ''}`}>
+                      <td className="p-4">
+                        <div className="flex items-center gap-2">
+                          <Server className="w-3.5 h-3.5 text-gold-dim" strokeWidth={1.5} />
+                          <span className="font-mono-ui text-sm text-ink font-medium">{app.server_id}</span>
+                        </div>
+                      </td>
+                      <td className="p-4 font-medium text-ink">
+                        <div className="flex items-center gap-2">
+                          <span>{app.app_name}</span>
+                          {forbidden && (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-cardinal/10 text-cardinal border border-cardinal/30 text-[10px] uppercase rounded-sm">
+                              <ShieldAlert className="w-3 h-3" /> Forbidden
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="p-4">
+                        <span className={`px-2 py-0.5 text-[10px] uppercase border rounded-sm ${
+                          app.install_scope === 'user'
+                            ? 'bg-gold-leaf/15 text-gold-dim border-gold-leaf/40'
+                            : 'bg-parchment-dark text-ink-muted border-ink-muted/30'
+                        }`}>
+                          {app.install_scope || 'system'}
+                        </span>
+                      </td>
+                      <td className="p-4 text-[11px] text-ink-muted">{app.app_version || '—'}</td>
+                      <td className="p-4 text-[11px] text-ink-muted max-w-xs truncate">{app.publisher || 'Unknown'}</td>
+                      <td className="p-4 text-[11px] text-ink-muted">{app.install_date || '—'}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
