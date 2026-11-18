@@ -28,7 +28,7 @@ services:
       DB_HOST: postgres
       DB_PORT: 5432
     ports:
-      - "${COLLECTOR_PORT:-8081}:8081"
+      - "${COLLECTOR_PORT:-8881}:8881"
     depends_on:
       postgres:
         condition: service_healthy
