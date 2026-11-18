@@ -1,250 +1,172 @@
-import React, { useState, useEffect } from 'react';
-import { Server, Laptop, HardDrive, Cpu, MemoryStick, Search, RefreshCw, ArrowRight } from 'lucide-react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Server, Laptop, Monitor, Cpu, MemoryStick, HardDrive, Search, RefreshCw, ArrowUpRight, ArrowRight, X, CheckCircle2, AlertTriangle, CircleAlert, Clock3, Layers, User, WifiOff } from 'lucide-react';
+import { deviceStatus, metricTone, timeAgo, STATUS_LABELS } from '../utils/deviceStatus';
 
-export default function Overview({ onSelectDevice }) {
+const priority = { critical: 0, warning: 1, stale: 2, unknown: 3, normal: 4 };
+const summaries = [
+  { tone: 'all', label: 'Total perangkat', caption: 'Terdaftar dalam inventaris', icon: Layers },
+  { tone: 'normal', label: 'Normal', caption: 'Pemakaian dalam batas normal', icon: CheckCircle2 },
+  { tone: 'warning', label: 'Peringatan', caption: 'Perlu pemeriksaan lebih lanjut', icon: AlertTriangle },
+  { tone: 'critical', label: 'Kritis', caption: 'Prioritaskan pemeriksaan', icon: CircleAlert },
+];
+const metrics = [['cpu', 'CPU', Cpu], ['ram', 'RAM', MemoryStick], ['disk', 'Disk', HardDrive]];
+
+async function getJSON(url, signal) {
+  const response = await fetch(url, { signal: AbortSignal.any([signal, AbortSignal.timeout(15000)]) });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  return response.json();
+}
+
+export default function Overview({ onSelectDevice, active = true }) {
   const [servers, setServers] = useState([]);
   const [statuses, setStatuses] = useState({});
+  const [failures, setFailures] = useState(new Set());
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState('');
+  const [lastUpdated, setLastUpdated] = useState(null);
+  const [now, setNow] = useState(() => Date.now());
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [sort, setSort] = useState('priority');
+  const request = useRef(null);
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
+    if (request.current) return;
+    const controller = new AbortController();
+    request.current = controller;
+    await Promise.resolve();
+    if (controller.signal.aborted) return;
+    setRefreshing(true);
     try {
-      const res = await fetch('/api/servers');
-      const data = await res.json();
-      setServers(data || []);
-
-      const statusMap = {};
-      for (const s of (data || [])) {
-        try {
-          const sRes = await fetch(`/api/servers/${s.server_id}/status`);
-          if (sRes.ok) {
-            const sData = await sRes.json();
-            statusMap[s.server_id] = sData;
+      const data = await getJSON('/api/servers', controller.signal);
+      if (!Array.isArray(data)) throw new Error('Invalid server list');
+      setServers(data);
+      const nextStatuses = {};
+      const failed = new Set();
+      let nextIndex = 0;
+      await Promise.all(Array.from({ length: Math.min(6, data.length) }, async () => {
+        while (nextIndex < data.length && !controller.signal.aborted) {
+          const server = data[nextIndex++];
+          try {
+            const status = await getJSON(`/api/servers/${encodeURIComponent(server.server_id)}/status`, controller.signal);
+            if (!status || typeof status !== 'object' || Array.isArray(status)) throw new Error('Invalid status');
+            nextStatuses[server.server_id] = status;
+          } catch {
+            failed.add(server.server_id);
           }
-        } catch (e) {
-          // ignore individual fetch errors
+        }
+      }));
+      if (controller.signal.aborted) return;
+      setStatuses(previous => Object.fromEntries(data.map(server => [server.server_id, nextStatuses[server.server_id] ?? previous[server.server_id]])));
+      setFailures(failed);
+      setError(failed.size ? `${failed.size} perangkat gagal diperbarui. Data terakhir yang tersedia tetap ditampilkan.` : '');
+      if (!failed.size) setLastUpdated(new Date());
+    } catch {
+      if (!controller.signal.aborted) setError('Tidak dapat terhubung ke layanan monitoring. Periksa koneksi lalu coba lagi.');
+    } finally {
+      if (request.current === controller) {
+        request.current = null;
+        if (!controller.signal.aborted) {
+          setLoading(false);
+          setRefreshing(false);
+          setNow(Date.now());
         }
       }
-      setStatuses(statusMap);
-} catch (_err) {
-        console.error('Failed to fetch servers:', _err);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-  useEffect(() => {
-    fetchData();
-    const interval = setInterval(fetchData, 10000);
-    return () => clearInterval(interval);
+    }
   }, []);
 
-  const filteredServers = servers.filter(s => {
-    const q = search.toLowerCase();
-    const matchSearch = s.server_id.toLowerCase().includes(q) ||
-      (s.hostname && s.hostname.toLowerCase().includes(q)) ||
-      (s.ip_address && s.ip_address.includes(q)) ||
-      (s.owner_name && s.owner_name.toLowerCase().includes(q));
-    const matchType = typeFilter === 'all' || (s.device_type && s.device_type.toLowerCase() === typeFilter);
-    return matchSearch && matchType;
+  useEffect(() => {
+    if (!active) return;
+    let disposed = false;
+    queueMicrotask(() => { if (!disposed) fetchData(); });
+    const interval = setInterval(() => {
+      setNow(Date.now());
+      if (!document.hidden) fetchData();
+    }, 10000);
+    return () => {
+      disposed = true;
+      clearInterval(interval);
+      request.current?.abort();
+      request.current = null;
+    };
+  }, [active, fetchData]);
+
+  const devices = servers.map(server => ({ ...server, status: statuses[server.server_id], health: deviceStatus(statuses[server.server_id], now, failures.has(server.server_id)) }));
+  const counts = devices.reduce((result, device) => { result[device.health.tone]++; return result; }, { all: devices.length, normal: 0, warning: 0, critical: 0, stale: 0, unknown: 0 });
+  const comparePriority = (a, b) => priority[a.health.tone] - priority[b.health.tone] || a.server_id.localeCompare(b.server_id);
+  const attention = devices.filter(device => device.health.tone !== 'normal').sort(comparePriority);
+  const query = search.trim().toLowerCase();
+  const filtered = devices.filter(device => {
+    const matchSearch = [device.server_id, device.hostname, device.ip_address, device.owner_name, device.department].some(value => String(value || '').toLowerCase().includes(query));
+    return matchSearch && (typeFilter === 'all' || device.device_type?.toLowerCase() === typeFilter) && (statusFilter === 'all' || (statusFilter === 'attention' ? device.health.tone !== 'normal' : device.health.tone === statusFilter));
+  }).sort((a, b) => {
+    if (sort === 'name') return a.server_id.localeCompare(b.server_id);
+    if (sort !== 'priority') return (b.status?.[`${sort}_percent`] ?? -1) - (a.status?.[`${sort}_percent`] ?? -1) || comparePriority(a, b);
+    return comparePriority(a, b);
   });
-
-  const getSealClass = (st) => {
-    if (!st || !st.last_seen_at) return 'wax-seal-offline';
-    const cpu = st.cpu_percent || 0;
-    const ram = st.ram_percent || 0;
-    const disk = st.disk_percent || 0;
-    if (cpu >= 90 || ram >= 95 || disk >= 95) return 'wax-seal-critical';
-    if (cpu >= 75 || ram >= 85 || disk >= 85) return 'wax-seal-warning';
-    return 'wax-seal-normal';
-  };
-
-  const getSealLabel = (st) => {
-    if (!st) return 'OFFLINE';
-    const cpu = st.cpu_percent || 0;
-    const ram = st.ram_percent || 0;
-    const disk = st.disk_percent || 0;
-    if (cpu >= 90 || ram >= 95 || disk >= 95) return 'CRITICAL';
-    if (cpu >= 75 || ram >= 85 || disk >= 85) return 'ATTENTION';
-    return 'NOMINAL';
+  const hasFilters = search !== '' || typeFilter !== 'all' || statusFilter !== 'all';
+  const reset = () => { setSearch(''); setTypeFilter('all'); setStatusFilter('all'); };
+  const filterAttention = () => {
+    setSearch(''); setTypeFilter('all'); setStatusFilter('attention');
+    document.getElementById('device-list-heading')?.focus({ preventScroll: true });
+    document.getElementById('device-list-heading')?.scrollIntoView({ block: 'start' });
   };
 
   return (
-    <div className="space-y-8">
-      {/* Ledger Header */}
-      <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 pb-4 border-b border-ink-muted/30">
-        <div>
-          <h2 className="font-display text-2xl font-semibold text-ink m-0">Daily Ledger</h2>
-          <p className="font-mono-ui text-[11px] text-ink-muted uppercase tracking-wider mt-1 m-0">
-            Estate Infrastructure Register
-          </p>
-        </div>
-        <button onClick={fetchData} className="flex items-center gap-2 px-4 py-2 bg-parchment-dark border border-ink-muted/40 text-ink text-[11px] font-mono-ui uppercase tracking-wider hover:bg-ink/5 transition focus-ring rounded-sm">
-          <RefreshCw className="w-4 h-4" strokeWidth={2} />
-          Refresh Ledger
-        </button>
+    <div className="overview">
+      <div className="page-heading">
+        <div><p className="eyebrow">MONITORING PERANGKAT</p><h1>Ringkasan infrastruktur</h1><p className="page-description">Pantau kondisi perangkat dan temukan yang perlu ditangani.</p></div>
+        <button className="button button-primary" onClick={fetchData} disabled={refreshing}><RefreshCw size={17} className={`refresh-icon ${refreshing ? 'is-spinning' : ''}`} />{refreshing ? 'Memperbarui…' : 'Perbarui data'}</button>
       </div>
-
-      {/* Summary Registers */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="ledger-card p-5">
-          <p className="font-mono-ui text-[10px] text-ink-muted uppercase tracking-wider m-0">Total Holdings</p>
-          <p className="font-display text-3xl font-semibold text-ink mt-1 m-0">{servers.length}</p>
-          <p className="font-mono-ui text-[11px] text-ink-muted mt-2 m-0">Managed Estates</p>
-        </div>
-        <div className="ledger-card p-5">
-          <p className="font-mono-ui text-[10px] text-ink-muted uppercase tracking-wider m-0">Nominal</p>
-          <p className="font-display text-3xl font-semibold text-moss mt-1 m-0">
-            {Object.values(statuses).filter(st => getSealClass(st) === 'wax-seal-normal').length}
-          </p>
-          <p className="font-mono-ui text-[11px] text-ink-muted mt-2 m-0">Operating within bounds</p>
-        </div>
-        <div className="ledger-card p-5">
-          <p className="font-mono-ui text-[10px] text-ink-muted uppercase tracking-wider m-0">Attention Required</p>
-          <p className="font-display text-3xl font-semibold text-gold-dim mt-1 m-0">
-            {Object.values(statuses).filter(st => getSealClass(st) === 'wax-seal-warning').length}
-          </p>
-          <p className="font-mono-ui text-[11px] text-ink-muted mt-2 m-0">Elevated metrics detected</p>
-        </div>
-        <div className="ledger-card p-5">
-          <p className="font-mono-ui text-[10px] text-ink-muted uppercase tracking-wider m-0">Critical</p>
-          <p className="font-display text-3xl font-semibold text-cardinal mt-1 m-0">
-            {Object.values(statuses).filter(st => getSealClass(st) === 'wax-seal-critical').length}
-          </p>
-          <p className="font-mono-ui text-[11px] text-ink-muted mt-2 m-0">Immediate steward action</p>
-        </div>
+      <div className="freshness-row"><span><Clock3 size={14} />{lastUpdated ? `Pembaruan lengkap ${lastUpdated.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : 'Menunggu pembaruan lengkap'}</span><span>Otomatis setiap 10 detik</span></div>
+      {error && <div className="notice notice-error" role="alert"><AlertTriangle size={19} /><span>{error}</span><button className="reset-button" onClick={fetchData} disabled={refreshing}>Coba lagi</button></div>}
+      <section className="summary-grid" aria-label="Ringkasan status perangkat" aria-busy={loading}>
+        {summaries.map(({ tone, label, caption, icon: Icon }) => <button key={tone} className={`summary-card ${statusFilter === tone ? 'is-selected' : ''}`} data-tone={tone} onClick={() => setStatusFilter(tone)} aria-pressed={statusFilter === tone}>
+          <span className="summary-label">{label}<span className="summary-icon"><Icon size={19} /></span></span><strong className="summary-value">{loading ? '—' : counts[tone]}</strong><span className="summary-caption">{caption}<ArrowUpRight size={15} /></span>
+        </button>)}
+      </section>
+      <div className="freshness-row">
+        <div className="filter-controls">{['stale', 'unknown'].map(tone => <button key={tone} className={`filter-chip ${statusFilter === tone ? 'is-active' : ''}`} data-tone={tone} onClick={() => setStatusFilter(statusFilter === tone ? 'all' : tone)} aria-pressed={statusFilter === tone}>{tone === 'stale' ? <Clock3 size={14} /> : <WifiOff size={14} />}{tone === 'unknown' ? 'Data belum lengkap / gagal' : STATUS_LABELS[tone]}<strong>{loading ? '—' : counts[tone]}</strong></button>)}</div>
+        <span>Data terlambat: tidak ada laporan &gt; 2 menit</span>
       </div>
-
-      {/* Search & Filter Bar */}
-      <div className="flex flex-col md:flex-row gap-4 items-start justify-between bg-parchment-dark border border-ink-muted/30 p-4">
-        <div className="relative w-full md:w-96">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-ink-muted" strokeWidth={2} />
-          <input 
-            type="text"
-            placeholder="Search holdings by name, hostname, or IP..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full bg-parchment border border-ink-muted/40 pl-10 pr-4 py-2.5 text-sm text-ink focus:outline-none focus:border-gold transition focus-ring rounded-sm"
-          />
+      {!loading && <section className="attention-panel" aria-labelledby="attention-heading">
+        <div className="section-heading"><h2 id="attention-heading"><AlertTriangle size={18} />Perlu perhatian <span>{attention.length}</span></h2>{attention.length > 0 && <button className="reset-button" onClick={filterAttention}>Lihat semua <ArrowRight size={15} /></button>}</div>
+        {attention.length ? <div className="attention-list">{attention.slice(0, 3).map(device => <button className="attention-item" key={device.server_id} onClick={() => onSelectDevice(device.server_id)}>
+          <span className="attention-icon" data-tone={device.health.tone}>{device.health.tone === 'critical' ? <CircleAlert size={19} /> : <AlertTriangle size={19} />}</span><span className="attention-copy"><span className="attention-title">{device.server_id}</span><span className="attention-reason">{device.health.reason}</span></span><ArrowUpRight size={17} />
+        </button>)}</div> : <div className="attention-empty"><CheckCircle2 size={20} /><span>{error ? 'Kondisi perangkat belum dapat dipastikan. Coba perbarui data.' : servers.length ? 'Semua perangkat melaporkan pemakaian dalam batas normal.' : 'Belum ada perangkat untuk dipantau.'}</span></div>}
+      </section>}
+      <section aria-labelledby="device-list-heading">
+        <div className="section-heading"><h2 id="device-list-heading" tabIndex={-1}>Daftar perangkat</h2><span>CPU · RAM · Penyimpanan</span></div>
+        <div className="device-toolbar">
+          <div className="search-field"><Search size={19} /><label className="sr-only" htmlFor="device-search">Cari nama, IP, pemilik, atau departemen</label><input id="device-search" type="search" placeholder="Cari nama, IP, pemilik…" value={search} onChange={event => setSearch(event.target.value)} />{search && <button onClick={() => setSearch('')} aria-label="Hapus pencarian"><X size={16} /></button>}</div>
+          <div className="filter-controls">
+            <label>Jenis<select value={typeFilter} onChange={event => setTypeFilter(event.target.value)}><option value="all">Semua jenis</option><option value="server">Server</option><option value="pc">PC</option><option value="laptop">Laptop</option></select></label>
+            <label>Status<select value={statusFilter} onChange={event => setStatusFilter(event.target.value)}><option value="all">Semua status</option><option value="attention">Perlu perhatian</option>{Object.entries(STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{value === 'unknown' ? 'Belum lengkap / gagal' : label}</option>)}</select></label>
+            <label>Urutkan<select value={sort} onChange={event => setSort(event.target.value)}><option value="priority">Prioritas</option><option value="name">Nama A–Z</option><option value="cpu">CPU tertinggi</option><option value="ram">RAM tertinggi</option><option value="disk">Disk tertinggi</option></select></label>
+          </div>
         </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          {['all', 'server', 'pc', 'laptop'].map((type) => (
-            <button
-              key={type}
-              onClick={() => setTypeFilter(type)}
-              className={`px-3 py-1.5 text-[10px] font-mono-ui uppercase tracking-wider transition focus-ring rounded-sm ${
-                typeFilter === type 
-                  ? 'bg-ink text-parchment' 
-                  : 'text-ink-muted bg-parchment border border-ink-muted/30 hover:text-ink hover:border-ink/50'
-              }`}
-            >
-              {type === 'all' ? 'All Holdings' : type.charAt(0).toUpperCase() + type.slice(1)}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Holdings Grid */}
-      {loading ? (
-        <div className="text-center py-16 text-ink-muted font-mono-ui">Recording ledger entries...</div>
-      ) : filteredServers.length === 0 ? (
-        <div className="text-center py-16 text-ink-muted bg-parchment-dark border border-ink-muted/30">
-          <Server className="w-14 h-14 mx-auto mb-4 opacity-30 text-ink-muted" strokeWidth={1.5} />
-          <p className="font-display text-lg text-ink m-0">No holdings recorded</p>
-          <p className="font-mono-ui text-[11px] mt-1 m-0">Ensure agents are reporting to the steward.</p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-          {filteredServers.map((s) => {
-            const st = statuses[s.server_id] || {};
-            const cpu = st.cpu_percent || 0;
-            const ram = st.ram_percent || 0;
-            const disk = st.disk_percent || 0;
-            const sealClass = getSealClass(st);
-            const sealLabel = getSealLabel(st);
-
-            return (
-              <article 
-                key={s.server_id}
-                onClick={() => onSelectDevice(s.server_id)}
-                className="ledger-card-elevated p-5 cursor-pointer transition hover:border-gold/50 group"
-                tabIndex={0}
-                onKeyDown={(e) => e.key === 'Enter' && onSelectDevice(s.server_id)}
-                role="button"
-                aria-label={`View details for ${s.server_id}`}
-              >
-                <div className="flex items-start justify-between mb-4">
-                  <div className="flex items-center gap-3">
-                    <div className={`p-2 rounded-sm ${s.device_type === 'laptop' ? 'bg-moss/10 text-moss' : 'bg-gold-leaf/10 text-gold-dim'}`}>
-                      {s.device_type === 'laptop' ? <Laptop className="w-5 h-5" strokeWidth={1.5} /> : <Server className="w-5 h-5" strokeWidth={1.5} />}
-                    </div>
-                    <h3 className="font-display text-lg font-semibold text-ink group-hover:text-gold-dim transition">{s.server_id}</h3>
-                  </div>
-                  <span className={`wax-seal ${sealClass} stamp`}>{sealLabel}</span>
-                </div>
-
-                <p className="font-mono-ui text-[11px] text-ink-muted mb-4">{s.hostname || 'Unknown host'}</p>
-
-                <div className="space-y-3 mb-4">
-                  <div>
-                    <div className="flex justify-between text-[11px] mb-1 font-mono-ui">
-                      <span className="text-ink-muted flex items-center gap-1.5"><Cpu className="w-3 h-3" strokeWidth={2} /> CPU</span>
-                      <span className={cpu > 85 ? 'text-cardinal font-bold' : cpu > 70 ? 'text-gold-dim font-bold' : 'text-ink'}>
-                        {cpu.toFixed(1)}%
-                      </span>
-                    </div>
-                    <div className="w-full bg-parchment-dark h-1.5 rounded-sm overflow-hidden border border-ink-muted/20">
-                      <div 
-                        className={`h-full rounded-sm transition-all duration-500 ${cpu > 85 ? 'bg-cardinal' : cpu > 70 ? 'bg-gold-dim' : 'bg-moss'}`}
-                        style={{ width: `${Math.min(cpu, 100)}%` }}
-                      ></div>
-                    </div>
-                  </div>
-
-                  <div>
-                    <div className="flex justify-between text-[11px] mb-1 font-mono-ui">
-                      <span className="text-ink-muted flex items-center gap-1.5"><MemoryStick className="w-3 h-3" strokeWidth={2} /> RAM</span>
-                      <span className={ram > 85 ? 'text-cardinal font-bold' : ram > 70 ? 'text-gold-dim font-bold' : 'text-ink'}>
-                        {ram.toFixed(1)}%
-                      </span>
-                    </div>
-                    <div className="w-full bg-parchment-dark h-1.5 rounded-sm overflow-hidden border border-ink-muted/20">
-                      <div 
-                        className={`h-full rounded-sm transition-all duration-500 ${ram > 85 ? 'bg-cardinal' : ram > 70 ? 'bg-gold-dim' : 'bg-blue-600'}`}
-                        style={{ width: `${Math.min(ram, 100)}%` }}
-                      ></div>
-                    </div>
-                  </div>
-
-                  <div>
-                    <div className="flex justify-between text-[11px] mb-1 font-mono-ui">
-                      <span className="text-ink-muted flex items-center gap-1.5"><HardDrive className="w-3 h-3" strokeWidth={2} /> Disk</span>
-                      <span className={disk > 85 ? 'text-cardinal font-bold' : disk > 70 ? 'text-gold-dim font-bold' : 'text-ink'}>
-                        {disk.toFixed(1)}%
-                      </span>
-                    </div>
-                    <div className="w-full bg-parchment-dark h-1.5 rounded-sm overflow-hidden border border-ink-muted/20">
-                      <div 
-                        className={`h-full rounded-sm transition-all duration-500 ${disk > 85 ? 'bg-cardinal' : disk > 70 ? 'bg-gold-dim' : 'bg-emerald-600'}`}
-                        style={{ width: `${Math.min(disk, 100)}%` }}
-                      ></div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="pt-3 border-t border-ink-muted/20 flex items-center justify-between text-[11px] font-mono-ui text-ink-muted">
-                  <span>IP: {s.ip_address || st.ip_address || '—'}</span>
-                  <span className="text-gold-dim group-hover:translate-x-0.5 transition flex items-center gap-1">
-                    Inspect <ArrowRight className="w-3 h-3" strokeWidth={2.5} />
-                  </span>
-                </div>
-              </article>
-            );
-          })}
-        </div>
-      )}
+        <div className="results-bar"><span role="status">{loading ? 'Memuat perangkat…' : `${filtered.length} dari ${servers.length} perangkat`}{statusFilter !== 'all' && ` · ${statusFilter === 'attention' ? 'Perlu perhatian' : STATUS_LABELS[statusFilter]}`}</span>{hasFilters && <button className="reset-button" onClick={reset}><X size={14} />Reset filter</button>}</div>
+        {loading ? <div className="loading-grid" role="status" aria-label="Memuat kondisi perangkat">{Array.from({ length: 6 }, (_, index) => <div className="skeleton-card" key={index} aria-hidden="true"><div className="skeleton-line" /><div className="skeleton-line" /><div className="skeleton-bar" /><div className="skeleton-bar" /><div className="skeleton-bar" /></div>)}</div>
+          : filtered.length === 0 ? <div className="empty-state"><Server size={36} /><h3>{hasFilters ? 'Tidak ada perangkat yang cocok' : error ? 'Data perangkat belum dapat dimuat' : 'Belum ada perangkat terdaftar'}</h3><p>{hasFilters ? 'Coba kata kunci lain atau hapus filter untuk melihat semua perangkat.' : error ? 'Periksa koneksi ke layanan monitoring, lalu coba lagi.' : 'Perangkat akan muncul setelah agent mengirimkan laporan pertama.'}</p>{hasFilters ? <button className="button" onClick={reset}>Reset filter</button> : error && <button className="button" onClick={fetchData} disabled={refreshing}>Coba lagi</button>}</div>
+            : <div className="device-grid">{filtered.map(device => {
+              const DeviceIcon = device.device_type?.toLowerCase() === 'laptop' ? Laptop : device.device_type?.toLowerCase() === 'pc' ? Monitor : Server;
+              return <article key={device.server_id} className="device-card">
+                <div className="device-header"><span className="device-icon"><DeviceIcon size={21} /></span><div className="device-identity"><h3><button type="button" className="device-title-button" onClick={() => onSelectDevice(device.server_id)} aria-label={`Lihat detail ${device.server_id}`}>{device.server_id}</button></h3><p className="device-subtitle">{device.hostname || 'Hostname belum tersedia'}</p></div></div>
+                <span className="status-badge" data-tone={device.health.tone} title={device.health.reason}>{device.health.tone === 'normal' ? <CheckCircle2 size={13} /> : device.health.tone === 'stale' ? <Clock3 size={13} /> : <CircleAlert size={13} />}{device.health.label}</span>
+                <p className="device-owner"><User size={14} />{[device.owner_name, device.department].filter(Boolean).join(' · ') || 'Pemilik belum ditetapkan'}</p>
+                <div className="metric-list">{metrics.map(([key, label, Icon]) => {
+                  const value = device.status?.[`${key}_percent`];
+                  const tone = metricTone(key, value);
+                  const known = tone !== 'unknown';
+                  return <div key={key}><div className="metric-row"><span className="metric-label"><Icon size={14} />{label}</span><span className="metric-value" data-tone={tone}>{known ? `${value.toFixed(1)}%` : '—'}</span></div><div className="metric-track" role="meter" aria-label={`${label} ${device.server_id}${known ? '' : ': belum tersedia'}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={known ? Math.max(0, Math.min(100, value)) : undefined} aria-valuetext={known ? `${value.toFixed(1)} persen` : 'Belum tersedia'}><div className="metric-fill" data-tone={device.health.tone === 'stale' || failures.has(device.server_id) ? 'unknown' : tone} style={{ width: `${known ? Math.max(0, Math.min(100, value)) : 0}%` }} /></div></div>;
+                })}</div>
+                <div className="device-footer"><span className="device-address">{device.ip_address || 'IP belum tersedia'}</span><span className="device-link" aria-hidden="true"><ArrowUpRight size={15} /></span></div>
+                <p className="last-seen"><Clock3 size={12} />{timeAgo(device.status?.last_seen_at, now)}</p>
+              </article>;
+            })}</div>}
+      </section>
     </div>
   );
 }
