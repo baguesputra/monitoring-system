@@ -93,10 +93,58 @@ Write-Host "Copied $BinaryName to $InstallDir" -ForegroundColor Green
 # 3. Generate config.yaml
 $ConfigPath = Join-Path $InstallDir $ConfigName
 if (-not $ServerID) {
+    # Prioritas 1: BIOS Serial Number
     $bios = Get-WmiObject Win32_BIOS -ErrorAction SilentlyContinue
     $ServerID = $bios.SerialNumber.Trim()
-    if (-not $ServerID) { $ServerID = $env:COMPUTERNAME }
-    Write-Host "Auto-generated ServerID from BIOS: $ServerID" -ForegroundColor Yellow
+    if ($ServerID) {
+        Write-Host "Auto-generated ServerID from BIOS: $ServerID" -ForegroundColor Green
+        goto config_ready
+    }
+
+    # Prioritas 2: ComputerSystem Name + Domain (lebih unik dari COMPUTERNAME)
+    $cs = Get-WmiObject Win32_ComputerSystem -ErrorAction SilentlyContinue
+    if ($cs) {
+        $ServerID = "$($cs.Name).$($cs.Domain)"
+        Write-Host "Auto-generated ServerID from ComputerSystem: $ServerID" -ForegroundColor Yellow
+        goto config_ready
+    }
+
+    # Prioritas 3: UUID dari csproduct
+    $uuid = (wmic csproduct get uuid 2>$null | Select-String -Pattern '[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}' | ForEach-Object { $_.ToString().Trim() })
+    if ($uuid) {
+        $ServerID = $uuid
+        Write-Host "Auto-generated ServerID from UUID: $ServerID" -ForegroundColor Yellow
+        goto config_ready
+    }
+
+    # Gagal semua — hentikan instalasi
+    Write-Error "Tidak dapat menghasilkan server_id unik: BIOS, ComputerSystem, dan UUID tidak tersedia."
+    exit 1
+}
+
+:config_ready
+
+# Detect local IPv4 address (skip loopback, link-local, and common NAT ranges)
+$IpAddress = $null
+try {
+    $ipAddresses = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop | Where-Object {
+        $_.IPAddress -ne '127.0.0.1' -and
+        $_.PrefixOrigin -ne 'WellKnown' -and
+        $_.IPAddress -notlike '169.254.*' -and
+        $_.IPAddress -notlike '192.168.*' -and
+        $_.IPAddress -notlike '10.*' -and
+        $_.IPAddress -notlike '172.1[6-9].*' -and
+        $_.IPAddress -notlike '172.2[0-9].*' -and
+        $_.IPAddress -notlike '172.3[0-1].*'
+    }
+    if ($ipAddresses.Count -gt 0) {
+        $IpAddress = $ipAddresses[0].IPAddress
+        Write-Host "Detected local IP: $IpAddress" -ForegroundColor Green
+    } else {
+        Write-Host "No suitable local IP found — skipping ip_address in config" -ForegroundColor Yellow
+    }
+} catch {
+    Write-Warning "Failed to detect IP: $($_.Exception.Message)"
 }
 
 $ConfigContent = @"
@@ -104,6 +152,7 @@ server_id: "$ServerID"
 device_type: "$DeviceType"
 collector_url: "$CollectorURL"
 interval_seconds: $IntervalSeconds
+$(if ($IpAddress) { "ip_address: \"$IpAddress\"" } else { "# ip_address: \"192.168.x.x\" # uncomment & set manually if needed" })
 services_to_check:
 $(($ServicesToCheck -split ',').ForEach({ "  - `"$_.Trim()`"" }) -join "`n")
 "@
